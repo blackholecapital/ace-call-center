@@ -12,3 +12,29 @@ enabled = true
 
 [observability.logs]
 enabled = true
+
+[env.ace]
+name = "ace-sms-worker"
+
+[env.ace.vars]
+TENANT_ID = "ace-host"
+CORPORATE_ID = "ace-host"
+DEFAULT_LOCATION_ID = "corporate"
+TENANT_MODE = "corporate-franchise"
+BRAND_NAME = "ACE Host"
+ASSISTANT_NAME = "ACE AI"
+PUBLIC_BASE_URL = "https://ace-sms-worker.cryptocapitalgroupfl.workers.dev"
+
+[[env.ace.queues.producers]]
+binding = "EVENTS"
+queue = "ace-communication-events"
+
+[[env.ace.analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "ace_message_events"
+
+[env.ace.observability]
+enabled = true
+
+[env.ace.observability.logs]
+enabled = true

@@ -38,3 +38,50 @@ queue = "blackhole-communication-events"
 [[analytics_engine_datasets]]
 binding = "ANALYTICS"
 dataset = "blackhole_message_events"
+
+# ACE is a dedicated environment of the same concierge code.
+[env.ace]
+name = "ace-concierge-worker"
+
+[env.ace.vars]
+TENANT_ID = "ace-host"
+CORPORATE_ID = "ace-host"
+DEFAULT_LOCATION_ID = "corporate"
+TENANT_MODE = "corporate-franchise"
+TENANT_PROFILE = "data-center"
+BRAND_NAME = "ACE Host"
+ASSISTANT_NAME = "ACE AI"
+PUBLIC_BASE_URL = "https://ace-concierge-worker.cryptocapitalgroupfl.workers.dev"
+DASHBOARD_URL = "https://ace-dashboard-worker.cryptocapitalgroupfl.workers.dev"
+DOCUSIGN_BASE_PATH = "https://demo.docusign.net/restapi"
+DOCUSIGN_RETURN_URL = "https://ace-concierge-worker.cryptocapitalgroupfl.workers.dev"
+DOCUSIGN_SELECTION_CUTOFF_MS = "1786309440000"
+
+[[env.ace.d1_databases]]
+binding = "DB"
+database_name = "ace-call-center-events"
+database_id = "REPLACE_WITH_ACE_EVENTS_D1_ID"
+
+[[env.ace.r2_buckets]]
+binding = "DOCUMENT_ARCHIVE"
+bucket_name = "ace-call-center-archive"
+
+[[env.ace.services]]
+binding = "SMS"
+service = "ace-sms-worker"
+
+[[env.ace.services]]
+binding = "EMAIL"
+service = "ace-email-worker"
+
+[[env.ace.services]]
+binding = "VOICE"
+service = "ace-voice-worker"
+
+[[env.ace.queues.producers]]
+binding = "EVENTS"
+queue = "ace-communication-events"
+
+[[env.ace.analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "ace_message_events"

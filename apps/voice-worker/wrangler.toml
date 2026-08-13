@@ -33,3 +33,42 @@ queue = "blackhole-communication-events"
 [[analytics_engine_datasets]]
 binding = "ANALYTICS"
 dataset = "blackhole_voice_events"
+
+[env.ace]
+name = "ace-voice-worker"
+services = []
+
+[env.ace.vars]
+TENANT_ID = "ace-host"
+CORPORATE_ID = "ace-host"
+DEFAULT_LOCATION_ID = "corporate"
+TENANT_MODE = "corporate-franchise"
+TENANT_PROFILE = "data-center"
+BRAND_NAME = "ACE Host"
+ASSISTANT_NAME = "ACE AI"
+CONCIERGE_PUBLIC_URL = "https://ace-concierge-worker.cryptocapitalgroupfl.workers.dev"
+PUBLIC_BASE_URL = "https://ace-voice-worker.cryptocapitalgroupfl.workers.dev"
+MEDIA_STREAM_URL = "wss://ace-voice-worker.cryptocapitalgroupfl.workers.dev/twilio/media"
+DEEPGRAM_STT_MODEL = "nova-3"
+DEEPGRAM_ENDPOINTING_MS = "300"
+BUDDY_RUNTIME_URL = "https://erkn5tqy74wqqi-8000.proxy.runpod.net"
+BUDDY_OPENAI_TTS_MODEL = "gpt-4o-mini-tts"
+BUDDY_OPENAI_TTS_VOICE = "cedar"
+BUDDY_OPENAI_TTS_SPEED = "1.0"
+
+[[env.ace.queues.producers]]
+binding = "EVENTS"
+queue = "ace-communication-events"
+
+[[env.ace.analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "ace_voice_events"
+
+[env.ace.observability]
+enabled = true
+
+[env.ace.observability.logs]
+enabled = true
+
+[env.ace.version_metadata]
+binding = "CF_VERSION_METADATA"

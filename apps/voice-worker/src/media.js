@@ -12,10 +12,12 @@ function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
 function normalizeUtterance(value=""){return String(value).toLowerCase().replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim();}
 function mentionsSigned(value=""){return /\b(signed|finished|done|submitted|sent it|completed)\b/i.test(String(value));}
 function cleanRuntimeToken(value=""){return String(value||"").replace(/[^A-Za-z0-9_-]/g,"");}
+function tenantContext(env,event={}){const payload=event.payload||{},contact=payload.contact||event.contact||{};return{tenantId:String(event.tenantId||payload.tenantId||env.TENANT_ID||"blackhole"),corporateId:String(event.corporateId||payload.corporateId||env.CORPORATE_ID||env.TENANT_ID||"blackhole"),locationId:String(event.locationId||payload.locationId||contact.locationId||contact.location_id||env.DEFAULT_LOCATION_ID||"corporate")};}
 
 async function emitEvent(env,event){
-  try{if(env.EVENTS)await env.EVENTS.send({...event,ts:Date.now()});}catch(e){console.error("media queue event failed",e);}
-  try{if(env.ANALYTICS)env.ANALYTICS.writeDataPoint({blobs:[event.type||"stream.event",event.contactId||"",event.callSid||"",event.streamSid||""],doubles:[Date.now(),Number(event.mediaBytes||0),Number(event.mediaChunks||0)]});}catch(e){console.error("media analytics event failed",e);}
+  const tenant=tenantContext(env,event),tagged={...event,...tenant,ts:Date.now()};
+  try{if(env.EVENTS)await env.EVENTS.send(tagged);}catch(e){console.error("media queue event failed",e);}
+  try{if(env.ANALYTICS)env.ANALYTICS.writeDataPoint({blobs:[event.type||"stream.event",event.contactId||"",event.callSid||"",event.streamSid||"",tenant.tenantId,tenant.corporateId,tenant.locationId],doubles:[Date.now(),Number(event.mediaBytes||0),Number(event.mediaChunks||0)],indexes:[tenant.tenantId]});}catch(e){console.error("media analytics event failed",e);}
 }
 async function runtimeJson(env,path,body){
   const base=String(env.BUDDY_RUNTIME_URL||"").trim().replace(/\/$/,""); const token=cleanRuntimeToken(env.BUDDY_RUNTIME_TOKEN);
@@ -41,7 +43,8 @@ async function runtimeTwilioAudio(env,text){
 async function conciergeRequest(env,path,payload){
   const secret=String(env.INTERNAL_CALL_SECRET||""); if(!secret)throw new Error("INTERNAL_CALL_SECRET is not configured for concierge handoff");
   const req=new Request(`https://concierge.internal${path}`,{method:"POST",headers:{"content-type":"application/json","x-internal-call-secret":secret},body:JSON.stringify(payload)});
-  const r=env.CONCIERGE?await env.CONCIERGE.fetch(req):await fetch(`https://blackhole-concierge-worker.cryptocapitalgroupfl.workers.dev${path}`,{method:"POST",headers:{"content-type":"application/json","x-internal-call-secret":secret},body:JSON.stringify(payload)});
+  const publicBase=String(env.CONCIERGE_PUBLIC_URL||"https://blackhole-concierge-worker.cryptocapitalgroupfl.workers.dev").replace(/\/$/,"");
+  const r=env.CONCIERGE?await env.CONCIERGE.fetch(req):await fetch(`${publicBase}${path}`,{method:"POST",headers:{"content-type":"application/json","x-internal-call-secret":secret},body:JSON.stringify(payload)});
   const t=await r.text();let d={};try{d=t?JSON.parse(t):{};}catch{d={raw:t};}if(!r.ok||d?.ok===false){console.error("Concierge handoff rejected",{path,status:r.status,body:d,via:env.CONCIERGE?"service-binding":"public-fetch"});throw new Error(d?.error||`Concierge request failed (${r.status})`);}return d;
 }
 const notifyProductSelection=(env,p)=>conciergeRequest(env,"/internal/product-selected",p);
@@ -54,12 +57,12 @@ export function handleTwilioMediaSocket(request,env,ctx){
   if((request.headers.get("Upgrade")||"").toLowerCase()!=="websocket")return json({ok:false,error:"Expected Upgrade: websocket"},426);
   const pair=new WebSocketPair(); const [client,server]=Object.values(pair); server.accept();
   const state={
-    connectedAt:Date.now(),streamSid:"",callSid:"",accountSid:"",contactId:"",firstName:"",lastName:"",phone:"",email:"",interest:"",location:"",comments:"",leadScore:"",preferredContactTime:"",
+    connectedAt:Date.now(),streamSid:"",callSid:"",accountSid:"",contactId:"",firstName:"",lastName:"",phone:"",email:"",interest:"",location:"",comments:"",leadScore:"",preferredContactTime:"",tenantId:String(env.TENANT_ID||"blackhole"),corporateId:String(env.CORPORATE_ID||env.TENANT_ID||"blackhole"),locationId:String(env.DEFAULT_LOCATION_ID||"corporate"),
     mediaChunks:0,mediaBytes:0,lastTimestamp:"",lastSequenceNumber:"",transcriptCount:0,stt:null,utteranceParts:[],turnGeneration:0,responseCount:0,
     selectedProduct:null,documentStatus:"Not sent",signatureAcknowledged:false,deliveryOptions:[],awaitingDeliveryChoice:false,deliveryScheduled:false,
     optionsOffered:false,awaitingProductChoice:false,lastUtterance:"",lastUtteranceAt:0,lastClarifyAt:0,lastPendingDocPromptAt:0,
   };
-  const pushEvent=(e)=>{const p=emitEvent(env,e);if(ctx?.waitUntil)ctx.waitUntil(p);else p.catch(()=>{});};
+  const pushEvent=(e)=>{const p=emitEvent(env,{tenantId:state.tenantId,corporateId:state.corporateId,locationId:state.locationId,...e});if(ctx?.waitUntil)ctx.waitUntil(p);else p.catch(()=>{});};
   const sendTwilioClear=()=>{if(state.streamSid)try{server.send(JSON.stringify({event:"clear",streamSid:state.streamSid}));}catch{}};
   function sendTwilioAudio(audioBytes,markName){if(!state.streamSid||!audioBytes?.length)return;server.send(JSON.stringify({event:"media",streamSid:state.streamSid,media:{payload:bytesToBase64(audioBytes)}}));server.send(JSON.stringify({event:"mark",streamSid:state.streamSid,mark:{name:markName}}));}
   async function speak(text,generation,eventType="buddy.turn.completed"){
@@ -69,9 +72,10 @@ export function handleTwilioMediaSocket(request,env,ctx){
     pushEvent({type:eventType,callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,response:text,audioBytes:audio.length});
   }
   function offerText(options){
-    if(!options.length)return "Hi, this is Buddy with Buddy's Home Furnishings. I don't have demo choices available for that category right now.";
+    const assistant=String(env.ASSISTANT_NAME||"AI Concierge"),brand=String(env.BRAND_NAME||"Black Hole Capital");
+    if(!options.length)return `Hi, this is ${assistant} with ${brand}. I don't have demo choices available for that category right now.`;
     const one=options[0]?.name||"option one",two=options[1]?.name||"option two";
-    const hello=state.firstName?`Hi ${state.firstName}, this is Buddy, your personal shopping assistant with Buddy's Home Furnishings.`:"Hi, this is Buddy, your personal shopping assistant with Buddy's Home Furnishings.";
+    const hello=state.firstName?`Hi ${state.firstName}, this is ${assistant}, your AI solutions assistant with ${brand}.`:`Hi, this is ${assistant}, your AI solutions assistant with ${brand}.`;
     return `${hello} I have two choices for ${state.interest||"your request"}: option one, ${one}, or option two, ${two}. Which one works for you?`;
   }
   function duplicateUtterance(clean){
@@ -167,7 +171,7 @@ export function handleTwilioMediaSocket(request,env,ctx){
     if(typeof event.data!=="string")return;let message;try{message=JSON.parse(event.data);}catch{return;}const type=String(message.event||"unknown");state.lastSequenceNumber=String(message.sequenceNumber||state.lastSequenceNumber||"");
     if(type==="connected"){console.log("Twilio media connected",{protocol:message.protocol||"",version:message.version||""});return;}
     if(type==="start"){
-      const start=message.start||{},params=start.customParameters||{};state.streamSid=String(start.streamSid||message.streamSid||"");state.callSid=String(start.callSid||"");state.accountSid=String(start.accountSid||"");state.contactId=String(params.contactId||"");state.firstName=String(params.firstName||"");state.lastName=String(params.lastName||"");state.phone=String(params.phone||"");state.email=String(params.email||"");state.interest=String(params.interest||"");state.location=String(params.location||"");state.comments=String(params.comments||"");state.leadScore=String(params.leadScore||"");state.preferredContactTime=String(params.preferredContactTime||"");const f=start.mediaFormat||{};
+      const start=message.start||{},params=start.customParameters||{};state.streamSid=String(start.streamSid||message.streamSid||"");state.callSid=String(start.callSid||"");state.accountSid=String(start.accountSid||"");state.contactId=String(params.contactId||"");state.firstName=String(params.firstName||"");state.lastName=String(params.lastName||"");state.phone=String(params.phone||"");state.email=String(params.email||"");state.interest=String(params.interest||"");state.location=String(params.location||"");state.comments=String(params.comments||"");state.leadScore=String(params.leadScore||"");state.preferredContactTime=String(params.preferredContactTime||"");state.tenantId=String(params.tenantId||state.tenantId);state.corporateId=String(params.corporateId||state.corporateId);state.locationId=String(params.locationId||state.locationId);const f=start.mediaFormat||{};
       console.log("Twilio media stream started",{streamSid:state.streamSid,callSid:state.callSid,contactId:state.contactId,encoding:f.encoding||"",sampleRate:f.sampleRate||"",channels:f.channels||"",sttConfigured:Boolean(env.DEEPGRAM_API_KEY),buddyRuntimeConfigured:Boolean(env.BUDDY_RUNTIME_URL&&env.BUDDY_RUNTIME_TOKEN),premiumTtsConfigured:Boolean(env.OPENAI_API_KEY),demoChoices:getBuddyDemoOptions(state.interest).length});pushEvent({type:"stream.media.started",streamSid:state.streamSid,callSid:state.callSid,contactId:state.contactId,firstName:state.firstName,interest:state.interest,location:state.location,leadScore:state.leadScore,encoding:String(f.encoding||""),sampleRate:Number(f.sampleRate||0),channels:Number(f.channels||0)});startTranscription();return;
     }
     if(type==="media"){const media=message.media||{},payload=String(media.payload||"");state.mediaChunks+=1;state.mediaBytes+=base64ByteLength(payload);state.lastTimestamp=String(media.timestamp||state.lastTimestamp||"");if(payload&&state.stt)state.stt.sendBase64(payload);if(state.mediaChunks%250===0)console.log("Twilio media heartbeat",{streamSid:state.streamSid,callSid:state.callSid,contactId:state.contactId,mediaChunks:state.mediaChunks,mediaBytes:state.mediaBytes,timestamp:state.lastTimestamp,transcriptCount:state.transcriptCount,responseCount:state.responseCount});return;}

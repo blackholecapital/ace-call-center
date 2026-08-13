@@ -1,4 +1,36 @@
 export const BUDDY_DEMO_CATALOG = {
+  "Dedicated Servers": [
+    { id:"dedicated-managed", name:"Managed Dedicated Server", short:"managed compute, monitoring, and support" },
+    { id:"dedicated-custom", name:"Custom Dedicated Server", short:"custom compute, memory, storage, and network configuration" },
+  ],
+  "Colocation Hosting": [
+    { id:"colo-quarter", name:"Quarter Rack Colocation", short:"secure rack space, power, and network connectivity" },
+    { id:"colo-half", name:"Half Rack Colocation", short:"expanded rack capacity with redundant connectivity" },
+  ],
+  "Full Rack Colocation": [
+    { id:"rack-standard", name:"Standard Full Rack", short:"full cabinet, metered power, and network uplinks" },
+    { id:"rack-high-density", name:"High Density Full Rack", short:"higher power density and custom network design" },
+  ],
+  "Crypto Mining Facility": [
+    { id:"mining-gpu", name:"GPU Mining Hosting", short:"power, cooling, monitoring, and remote hands" },
+    { id:"mining-asic", name:"ASIC Mining Hosting", short:"high-density power and purpose-built cooling" },
+  ],
+  "AI Call Automation": [
+    { id:"ai-call-inbound", name:"Inbound AI Call Concierge", short:"always-on call answering, qualification, and routing" },
+    { id:"ai-call-outbound", name:"Outbound AI Call Campaigns", short:"automated lead follow-up and appointment booking" },
+  ],
+  "AI Lead Qualification": [
+    { id:"ai-lead-realtime", name:"Real-Time Lead Qualification", short:"instant scoring, enrichment, and sales handoff" },
+    { id:"ai-lead-reactivation", name:"Lead Reactivation Automation", short:"multi-channel follow-up for dormant opportunities" },
+  ],
+  "AI Support Concierge": [
+    { id:"ai-support-tier1", name:"Tier One AI Support", short:"automated intake, troubleshooting, and escalation" },
+    { id:"ai-support-noc", name:"AI NOC Concierge", short:"incident intake, status updates, and on-call routing" },
+  ],
+  "AI Workflow Automation": [
+    { id:"ai-workflow-sales", name:"Sales Workflow Automation", short:"CRM updates, proposals, reminders, and reporting" },
+    { id:"ai-workflow-ops", name:"Operations Workflow Automation", short:"ticketing, provisioning, alerts, and approvals" },
+  ],
   "Living Room Furniture": [
     { id: "living-1", name: "Ashton 3-Piece Living Room Set", short: "sofa, loveseat, and chair" },
     { id: "living-2", name: "Camden Reclining Sofa & Loveseat", short: "reclining two-piece living room set" },

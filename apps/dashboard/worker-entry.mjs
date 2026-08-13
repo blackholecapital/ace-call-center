@@ -24,6 +24,49 @@ import followupCheckJob from "./worker/jobs/followup-check/index.js";
 
 let memoryBackendSet = false;
 
+function tenantContext(workerEnv, source = {}) {
+  const payload = source?.payload || {};
+  const contact = payload?.contact || source?.contact || {};
+  return {
+    tenantId:String(source.tenantId || payload.tenantId || workerEnv.TENANT_ID || "blackhole"),
+    corporateId:String(source.corporateId || payload.corporateId || workerEnv.CORPORATE_ID || workerEnv.TENANT_ID || "blackhole"),
+    locationId:String(
+      source.locationId || source.location_id || payload.locationId || payload.location_id ||
+      contact.locationId || contact.location_id || workerEnv.DEFAULT_LOCATION_ID || "corporate"
+    ),
+  };
+}
+
+function writeAnalytics(workerEnv, event, status, durationMs = 0) {
+  if (!workerEnv.ANALYTICS) return;
+  const tenant = tenantContext(workerEnv, event);
+  try {
+    workerEnv.ANALYTICS.writeDataPoint({
+      blobs:[String(event.type || "unknown"), String(status || ""), tenant.tenantId, tenant.corporateId, tenant.locationId],
+      doubles:[Date.now(), Number(durationMs || 0)],
+      indexes:[tenant.tenantId],
+    });
+  } catch (error) {
+    logger.warn("Analytics write failed", { type:event.type || "unknown", error:error.message });
+  }
+}
+
+async function archiveEvents(workerEnv, events) {
+  if (!workerEnv.TENANT_ARCHIVE || !events.length) return;
+  const tenant = tenantContext(workerEnv, events[0]);
+  const datePath = new Date().toISOString().slice(0, 10).replaceAll("-", "/");
+  const key = `tenants/${tenant.tenantId}/events/${datePath}/batch-${Date.now()}-${crypto.randomUUID()}.ndjson`;
+  const body = `${events.map(event => JSON.stringify(event)).join("\n")}\n`;
+  await workerEnv.TENANT_ARCHIVE.put(key, body, {
+    httpMetadata:{ contentType:"application/x-ndjson" },
+    customMetadata:{
+      tenantId:tenant.tenantId,
+      corporateId:tenant.corporateId,
+      eventCount:String(events.length),
+    },
+  });
+}
+
 async function initPersistence(workerEnv) {
   if (workerEnv.DB) {
     d1Cached.setDb(workerEnv.DB);
@@ -51,7 +94,8 @@ function ensureSeed() {
   }
 }
 
-function jsonResponse(status, payload, correlationId, requestId) {
+function jsonResponse(status, payload, correlationId, requestId, workerEnv, source = {}) {
+  const tenant = tenantContext(workerEnv || {}, source);
   return new Response(JSON.stringify(payload, null, 2), {
     status,
     headers:{
@@ -59,6 +103,9 @@ function jsonResponse(status, payload, correlationId, requestId) {
       "Access-Control-Allow-Origin":"*",
       "X-Correlation-Id":correlationId || "",
       "X-Request-Id":requestId || "",
+      "X-Tenant-Id":tenant.tenantId,
+      "X-Corporate-Id":tenant.corporateId,
+      "X-Location-Id":tenant.locationId,
     },
   });
 }
@@ -77,7 +124,7 @@ export default {
       return new Response(null, { status:204, headers:{
         "Access-Control-Allow-Origin":"*",
         "Access-Control-Allow-Methods":"GET,POST,PUT,DELETE,OPTIONS",
-        "Access-Control-Allow-Headers":"Content-Type,Authorization,X-Correlation-Id",
+        "Access-Control-Allow-Headers":"Content-Type,Authorization,X-Correlation-Id,X-Tenant-Id,X-Corporate-Id,X-Location-Id",
       }});
     }
 
@@ -85,18 +132,20 @@ export default {
 
     const correlationId = request.headers.get("x-correlation-id") || logger.generateCorrelationId();
     const requestId = `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,6)}`;
+    const requestStartedAt = Date.now();
 
     const response = await logger.withContext({ correlationId, requestId }, async () => {
       metrics.increment("http.requests");
       const headersObj = {};
       request.headers.forEach((v,k)=>{ headersObj[k]=v; });
       const authResult = permissions.enforce(method, pathname, headersObj);
-      if (!authResult.allowed) return jsonResponse(403, { ok:false, error:authResult.error }, correlationId, requestId);
+      const requestScope = { locationId:request.headers.get("x-location-id") || workerEnv.DEFAULT_LOCATION_ID };
+      if (!authResult.allowed) return jsonResponse(403, { ok:false, error:authResult.error }, correlationId, requestId, workerEnv, requestScope);
 
       const queryObj = {};
       searchParams.forEach((v,k)=>{ queryObj[k]=v; });
       const match = routeRequest(pathname, method, queryObj, headersObj);
-      if (!match) return jsonResponse(404, { ok:false, error:"Route not found" }, correlationId, requestId);
+      if (!match) return jsonResponse(404, { ok:false, error:"Route not found" }, correlationId, requestId, workerEnv, requestScope);
 
       try {
         let body = {};
@@ -106,14 +155,15 @@ export default {
         const result = await match.fn({ method, body, params:match.params, user:authResult.user, env:workerEnv });
         const status = result.ok ? 200 : 400;
         metrics.increment("http.responses." + status);
-        return jsonResponse(status, result, correlationId, requestId);
+        return jsonResponse(status, result, correlationId, requestId, workerEnv, requestScope);
       } catch (err) {
         metrics.increment("http.errors");
         logger.error("Handler error", { method, path:pathname, error:err.message });
-        return jsonResponse(500, { ok:false, error:"Internal server error" }, correlationId, requestId);
+        return jsonResponse(500, { ok:false, error:"Internal server error" }, correlationId, requestId, workerEnv, requestScope);
       }
     });
 
+    writeAnalytics(workerEnv, { type:`http.${method.toLowerCase()}`, locationId:request.headers.get("x-location-id") || workerEnv.DEFAULT_LOCATION_ID }, String(response.status), Date.now() - requestStartedAt);
     if (d1Cached.isDirty() && workerEnv.DB) ctx.waitUntil(d1Cached.flush());
     return response;
   },
@@ -122,25 +172,37 @@ export default {
     env.setBindings(workerEnv);
     await initPersistence(workerEnv);
 
+    const processed = [];
+    const eventsDb = workerEnv.EVENTS_DB || workerEnv.BUDDY_DB;
     for (const msg of batch.messages) {
-      const job = msg.body || {};
+      const receivedAt = Date.now();
+      const sourceJob = msg.body || {};
+      const job = { ...sourceJob, ...tenantContext(workerEnv, sourceJob) };
       try {
         if (job.type === "campaign-send") {
           await campaignSendJob.run();
         } else if (job.type === "followup-check") {
           await followupCheckJob.run();
-        } else if (workerEnv.BUDDY_DB && job.type) {
-          await buddyEvents.record(workerEnv.BUDDY_DB, job);
+        } else if (eventsDb && job.type) {
+          await buddyEvents.record(eventsDb, job);
         } else {
           logger.warn("Unknown queue message", { type:job.type || "unknown" });
         }
         msg.ack();
+        processed.push(job);
+        writeAnalytics(workerEnv, job, "processed", Date.now() - receivedAt);
         metrics.increment("queue.processed");
       } catch (err) {
         msg.retry();
+        writeAnalytics(workerEnv, job, "retry", Date.now() - receivedAt);
         metrics.increment("queue.failed");
         logger.error("Queue message failed", { type:job.type || "unknown", error:err.message });
       }
+    }
+
+    if (processed.length) {
+      try { await archiveEvents(workerEnv, processed); }
+      catch (error) { logger.error("Tenant archive write failed", { eventCount:processed.length, error:error.message }); }
     }
 
     if (d1Cached.isDirty() && workerEnv.DB) await d1Cached.flush();

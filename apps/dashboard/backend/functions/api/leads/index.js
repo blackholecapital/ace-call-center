@@ -43,6 +43,10 @@ module.exports = async function handler({ method, body, env }) {
 
   const leadScore = scoreLead(body);
   const preferredContactMethod = body.contact_method || body.preferredContactMethod || "";
+  const tenantId = body.tenantId || env.TENANT_ID || "blackhole";
+  const corporateId = body.corporateId || env.CORPORATE_ID || tenantId;
+  const locationId = body.location_id || body.locationId || env.DEFAULT_LOCATION_ID || "corporate";
+  const brandName = env.BRAND_NAME || "Black Hole Capital";
 
   let contact = contacts.create({
     firstName: body.first_name || body.firstName || "",
@@ -57,9 +61,12 @@ module.exports = async function handler({ method, body, env }) {
     preferredContactTime: body.contact_time || "",
     comments: body.comments || "",
     smsConsent: body.consent === true || body.consent === "true" || body.consent === "on",
-    owner: body.owner || "Buddy Web Lead",
-    company: body.company || "Buddy's Home Furnishings",
-    source: "Buddy web lead",
+    owner: body.owner || `${brandName} Web Lead`,
+    company: body.company || brandName,
+    source: `${brandName} web lead`,
+    tenantId,
+    corporateId,
+    locationId,
     leadScore,
     stage: "New Lead",
     outreachStatus: "Pending",
@@ -71,8 +78,8 @@ module.exports = async function handler({ method, body, env }) {
     type:"lead.created",
     entityType:"lead",
     entityId:contact.id,
-    message:`Buddy web lead: ${contact.firstName} ${contact.lastName}`,
-    metadata:{ ...body, leadScore }
+    message:`${brandName} web lead: ${contact.firstName} ${contact.lastName}`,
+    metadata:{ ...body, leadScore, tenantId, corporateId, locationId }
   });
 
   const callNowUrl = contact.email ? await buildCallNowUrl(env, contact.id) : "";
@@ -83,7 +90,10 @@ module.exports = async function handler({ method, body, env }) {
       contactId:contact.id,
       contact,
       lead:{ ...body, leadScore },
-      callback:{ callNowUrl, persistent:true, source:"buddy-email" },
+      tenantId,
+      corporateId,
+      locationId,
+      callback:{ callNowUrl, persistent:true, source:"lead-email" },
     });
   } catch(err) {
     concierge = { ok:false, error:err.message };
@@ -101,8 +111,8 @@ module.exports = async function handler({ method, body, env }) {
       type:"lead.contacted",
       entityType:"lead",
       entityId:contact.id,
-      message:`Buddy outreach sent to ${contact.firstName || contact.phone || contact.email}`,
-      metadata:{ smsSent, emailSent, preferredContactMethod, contactFlow:concierge?.contactFlow || null },
+      message:`${brandName} outreach sent to ${contact.firstName || contact.phone || contact.email}`,
+      metadata:{ smsSent, emailSent, preferredContactMethod, contactFlow:concierge?.contactFlow || null, tenantId, corporateId, locationId },
     });
   }
 

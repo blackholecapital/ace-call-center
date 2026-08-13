@@ -41,6 +41,13 @@ module.exports = async function handler({ method, body, params }) {
     idempotencyKeys: idempotency.size(),
     dlqDepth: getDlq().length,
     queuePending: queue.pending().length,
+    tenant: {
+      tenantId:env.get("TENANT_ID"),
+      corporateId:env.get("CORPORATE_ID"),
+      defaultLocationId:env.get("DEFAULT_LOCATION_ID"),
+      mode:env.get("TENANT_MODE"),
+      brand:env.get("BRAND_NAME"),
+    },
   };
 
   const db = readDb();

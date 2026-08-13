@@ -67,3 +67,70 @@ binding = "FOLLOWUP_QUEUE"
 [[services]]
 binding = "CONCIERGE"
 service = "blackhole-concierge-worker"
+
+# --- ACE Host corporate tenant ---
+# Same proven code, separate worker services and separate customer data plane.
+# Replace D1 placeholders after following docs/cloudflare/ACE-TENANT-DEPLOYMENT.md.
+[env.ace]
+name = "ace-dashboard-worker"
+
+[env.ace.assets]
+directory = "./frontend"
+binding = "ASSETS"
+run_worker_first = true
+not_found_handling = "single-page-application"
+
+[env.ace.vars]
+APP_VERSION = "ace-corporate-v1"
+NODE_ENV = "production"
+LOG_LEVEL = "info"
+LOG_FORMAT = "json"
+DB_BACKEND = "d1"
+RUNTIME_TARGET = "edge"
+TENANT_ID = "ace-host"
+CORPORATE_ID = "ace-host"
+DEFAULT_LOCATION_ID = "corporate"
+TENANT_MODE = "corporate-franchise"
+TENANT_PROFILE = "data-center"
+BRAND_NAME = "ACE Host"
+ASSISTANT_NAME = "ACE AI"
+DASHBOARD_PUBLIC_URL = "https://ace-dashboard-worker.cryptocapitalgroupfl.workers.dev"
+
+[[env.ace.d1_databases]]
+binding = "DB"
+database_name = "ace-call-center-dashboard"
+database_id = "REPLACE_WITH_ACE_DASHBOARD_D1_ID"
+
+[[env.ace.d1_databases]]
+binding = "BUDDY_DB"
+database_name = "ace-call-center-events"
+database_id = "REPLACE_WITH_ACE_EVENTS_D1_ID"
+
+[[env.ace.r2_buckets]]
+binding = "TENANT_ARCHIVE"
+bucket_name = "ace-call-center-archive"
+
+[[env.ace.queues.producers]]
+binding = "FOLLOWUP_QUEUE"
+queue = "ace-followup-jobs"
+
+[[env.ace.queues.consumers]]
+queue = "ace-followup-jobs"
+max_batch_size = 20
+max_retries = 3
+dead_letter_queue = "ace-followup-jobs-dlq"
+
+[[env.ace.queues.consumers]]
+queue = "ace-communication-events"
+max_batch_size = 50
+max_batch_timeout = 5
+max_retries = 3
+dead_letter_queue = "ace-communication-events-dlq"
+
+[[env.ace.analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "ace_dashboard_events"
+
+[[env.ace.services]]
+binding = "CONCIERGE"
+service = "ace-concierge-worker"
