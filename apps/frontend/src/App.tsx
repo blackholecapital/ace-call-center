@@ -100,6 +100,7 @@ export default function App(){
         <button onClick={()=>setView("Accounts")} className={view==="Accounts"?"nav-item active":"nav-item"}><Building2 size={19}/> Accounts</button>
         <button onClick={()=>setView("Conversations")} className={view==="Conversations"?"nav-item active":"nav-item"}><Headphones size={19}/> Conversations</button>
         <button onClick={()=>setView("Analytics")} className={view==="Analytics"?"nav-item active":"nav-item"}><BarChart3 size={19}/> Analytics</button>
+        <a href="/lead/" className="nav-item" style={{textDecoration:"none"}}><ExternalLink size={19}/> Lead Demo</a>
       </nav>
       <div className="ai-side-card"><span><Sparkles size={14}/> NEW</span><strong>AI Automations</strong><p>24/7 voice, follow-up and lead conversion—built into ACE Host.</p><button onClick={()=>{setView("Operations");setTab("Leads");}}>View product <ChevronRight size={14}/></button></div>
       <div className="side-status"><span className={live?"dot live":"dot"}/>{live?"Live infrastructure data":"ACE demo data"}<small>AI call center online</small></div>
