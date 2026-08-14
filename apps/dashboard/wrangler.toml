@@ -31,12 +31,12 @@ DASHBOARD_PUBLIC_URL = "https://ace-dashboard-worker.cryptocapitalgroupfl.worker
 [[d1_databases]]
 binding = "DB"
 database_name = "ace-call-center-dashboard"
-database_id = "REPLACE_WITH_ACE_DASHBOARD_D1_ID"
+database_id = "d59697f5-0dbe-40db-850f-b1a1a456cb3e"
 
 [[d1_databases]]
 binding = "BUDDY_DB"
 database_name = "ace-call-center-events"
-database_id = "REPLACE_WITH_ACE_EVENTS_D1_ID"
+database_id = "a8e336d2-da11-483a-b79f-3e39a2783c8c"
 
 [[r2_buckets]]
 binding = "TENANT_ARCHIVE"

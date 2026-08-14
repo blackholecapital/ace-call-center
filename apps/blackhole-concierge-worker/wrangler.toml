@@ -23,7 +23,7 @@ DOCUSIGN_SELECTION_CUTOFF_MS = "1786309440000"
 [[d1_databases]]
 binding = "DB"
 database_name = "ace-call-center-events"
-database_id = "REPLACE_WITH_ACE_EVENTS_D1_ID"
+database_id = "a8e336d2-da11-483a-b79f-3e39a2783c8c"
 
 [[r2_buckets]]
 binding = "DOCUMENT_ARCHIVE"
