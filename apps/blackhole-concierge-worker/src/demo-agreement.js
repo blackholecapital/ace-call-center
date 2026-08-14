@@ -47,56 +47,56 @@ function field(commands, x, y, width, label, value) {
   commands.push(text(x + 8, y + 9, 10, value, "F1", "#111111"));
 }
 
-function buildPdfBytes({ contact = {}, product = {}, selectionNumber = 1, agreementId = "DEMO-PENDING" } = {}) {
+function buildPdfBytes({ contact = {}, product = {}, selectionNumber = 1, agreementId = "DEMO-PENDING", brandName = "ACE Host", assistantName = "ACE AI" } = {}) {
   const fullName = `${contact.firstName || ""} ${contact.lastName || ""}`.trim() || "Customer";
   const commands = [];
 
-  commands.push(fillRect(0, 637, 612, 155, "#214b9f"));
-  commands.push(fillRect(38, 672, 56, 56, "#ffe52f"));
-  commands.push(text(56, 690, 28, "B", "F2", "#10245b"));
-  commands.push(text(112, 714, 20, "BUDDY'S HOME FURNISHINGS", "F2", "#ffffff"));
-  commands.push(text(112, 692, 12, "Rental-Purchase Demo Agreement", "F1", "#ffffff"));
+  commands.push(fillRect(0, 637, 612, 155, "#111111"));
+  commands.push(fillRect(38, 672, 56, 56, "#e11919"));
+  commands.push(text(52, 690, 25, "ACE", "F2", "#ffffff"));
+  commands.push(text(112, 714, 20, brandName.toUpperCase(), "F2", "#ffffff"));
+  commands.push(text(112, 692, 12, "Infrastructure Services Demo Agreement", "F1", "#ffffff"));
   commands.push(text(448, 730, 8, "DEMONSTRATION DOCUMENT", "F2", "#ffffff"));
   commands.push(text(448, 714, 7, "DocuSign test environment", "F1", "#ffffff"));
 
   commands.push(rect(438, 652, 140, 44, "#ffffff", "#ffffff"));
   commands.push(text(448, 678, 7, "AGREEMENT ID", "F2", "#5c6f91"));
-  commands.push(text(448, 660, 8, agreementId, "F2", "#10245b"));
+  commands.push(text(448, 660, 8, agreementId, "F2", "#111111"));
 
-  commands.push(text(38, 592, 14, "Customer & Contact", "F2", "#10245b"));
+  commands.push(text(38, 592, 14, "Prospect & Contact", "F2", "#111111"));
   commands.push(line(38, 584, 574, 584));
   field(commands, 38, 526, 250, "CUSTOMER NAME", fullName);
   field(commands, 330, 526, 244, "PHONE", contact.phone || "");
   field(commands, 38, 476, 250, "EMAIL", contact.email || "");
   field(commands, 330, 476, 244, "STATE / AREA", contact.location || "");
 
-  commands.push(text(38, 412, 14, "Selected Product", "F2", "#10245b"));
+  commands.push(text(38, 412, 14, "Selected ACE Service", "F2", "#111111"));
   commands.push(line(38, 404, 574, 404));
   field(commands, 38, 346, 190, "CATEGORY", contact.interest || product.category || "");
   field(commands, 244, 346, 330, "SELECTED ITEM", product.name || "");
   field(commands, 38, 296, 110, "OPTION", String(selectionNumber));
   field(commands, 164, 296, 110, "LEAD SCORE", String(contact.leadScore ?? ""));
 
-  commands.push(fillRect(38, 176, 536, 88, "#f5f8ff"));
-  commands.push(text(50, 242, 10, "Demo transaction acknowledgement", "F2", "#10245b"));
+  commands.push(fillRect(38, 176, 536, 88, "#fff5f5"));
+  commands.push(text(50, 242, 10, "Demo services acknowledgement", "F2", "#111111"));
   const notes = [
-    "- This document is used only to demonstrate Buddy's automated sales workflow.",
-    "- No payment information is collected by this demo agreement.",
-    "- Signing confirms the selected demo item and allows delivery scheduling to continue.",
-    "- This is not a binding retail rental-purchase agreement and creates no purchase obligation.",
+    `- This document demonstrates ${brandName}'s automated sales workflow.`,
+    "- No payment information is collected by this demonstration.",
+    "- Signing confirms the selected demo service and enables consultation scheduling.",
+    "- This is not a binding services contract and creates no purchase obligation.",
   ];
   notes.forEach((note, index) => commands.push(text(50, 222 - index * 13, 8, note, "F1", "#5c6f91")));
 
-  commands.push(text(38, 138, 14, "Customer Acceptance", "F2", "#10245b"));
+  commands.push(text(38, 138, 14, "Prospect Acceptance", "F2", "#111111"));
   commands.push(line(38, 130, 574, 130));
   commands.push(text(50, 104, 7, "CUSTOMER SIGNATURE", "F2", "#5c6f91"));
   commands.push(text(390, 104, 7, "DATE SIGNED", "F2", "#5c6f91"));
   commands.push(line(50, 58, 320, 58));
   commands.push(line(390, 58, 550, 58));
 
-  commands.push(fillRect(0, 0, 612, 42, "#214b9f"));
-  commands.push(text(38, 18, 8, "Buddy's Home Furnishings - Personal Shopper Demo", "F2", "#ffffff"));
-  commands.push(text(372, 18, 7, "Powered by Buddy AI workflow - DocuSign + Google Calendar", "F1", "#ffffff"));
+  commands.push(fillRect(0, 0, 612, 42, "#111111"));
+  commands.push(text(38, 18, 8, `${brandName} - AI Call Center Demo`, "F2", "#ffffff"));
+  commands.push(text(372, 18, 7, `Powered by ${assistantName} - DocuSign + scheduling`, "F1", "#ffffff"));
 
   const stream = commands.join("\n");
   const objects = [];
@@ -107,7 +107,7 @@ function buildPdfBytes({ contact = {}, product = {}, selectionNumber = 1, agreem
   objects[5] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
   objects[6] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>";
 
-  let pdf = "%PDF-1.4\n%BuddyDemo\n";
+  let pdf = "%PDF-1.4\n%AceHostDemo\n";
   const offsets = [0];
   for (let i = 1; i <= 6; i += 1) {
     offsets[i] = new TextEncoder().encode(pdf).length;
@@ -121,17 +121,17 @@ function buildPdfBytes({ contact = {}, product = {}, selectionNumber = 1, agreem
   return new TextEncoder().encode(pdf);
 }
 
-export function buildDemoEnvelope({ contact = {}, product = {}, selectionNumber = 1, agreementId = "DEMO-PENDING" } = {}) {
+export function buildDemoEnvelope({ contact = {}, product = {}, selectionNumber = 1, agreementId = "DEMO-PENDING", brandName = "ACE Host", assistantName = "ACE AI" } = {}) {
   const fullName = `${contact.firstName || ""} ${contact.lastName || ""}`.trim() || "Customer";
   const signerEmail = contact.email || "";
-  const documentBase64 = bytesToBase64(buildPdfBytes({ contact, product, selectionNumber, agreementId }));
+  const documentBase64 = bytesToBase64(buildPdfBytes({ contact, product, selectionNumber, agreementId, brandName, assistantName }));
 
   return {
-    emailSubject: `Buddy's Home Furnishings - Demo Agreement for ${product.name || contact.interest || "Your Selection"}`,
+    emailSubject: `${brandName} - Demo Services Agreement for ${product.name || contact.interest || "Your Selection"}`,
     status:"sent",
     documents:[{
       documentBase64,
-      name:"Buddy's Demo Rental-Purchase Agreement.pdf",
+      name:`${brandName} Demo Services Agreement.pdf`,
       fileExtension:"pdf",
       documentId:"1",
     }],

@@ -120,7 +120,7 @@ async function forwardSmsReply(env, body) {
 
   const response = env.CONCIERGE
     ? await env.CONCIERGE.fetch(request)
-    : await fetch(`${String(env.CONCIERGE_PUBLIC_URL || "https://blackhole-concierge-worker.cryptocapitalgroupfl.workers.dev").replace(/\/$/, "")}/internal/sms-reply`, {
+    : await fetch(`${String(env.CONCIERGE_PUBLIC_URL || "https://ace-concierge-worker.cryptocapitalgroupfl.workers.dev").replace(/\/$/, "")}/internal/sms-reply`, {
         method:"POST",
         headers:{ "content-type":"application/json", "x-internal-call-secret":secret },
         body:JSON.stringify(payload),

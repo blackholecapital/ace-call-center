@@ -152,7 +152,7 @@ export function docusignConfigured(env) {
 export function docusignConsentUrl(env) {
   const clientId = String(env.DOCUSIGN_INTEGRATION_KEY || "");
   const redirectUri = String(
-    env.DOCUSIGN_CONSENT_REDIRECT_URI || env.PUBLIC_BASE_URL || "https://blackhole-concierge-worker.cryptocapitalgroupfl.workers.dev"
+    env.DOCUSIGN_CONSENT_REDIRECT_URI || env.PUBLIC_BASE_URL || "https://ace-concierge-worker.cryptocapitalgroupfl.workers.dev"
   ).replace(/\/$/, "") + "/docusign/consent-complete";
 
   const qs = new URLSearchParams({
@@ -262,16 +262,23 @@ export async function createBuddySigningSession(env, {
   if (!contact.email) throw new Error("Customer email is required for the DocuSign signer identity");
 
   const accountId = String(env.DOCUSIGN_ACCOUNT_ID);
-  const clientUserId = `buddy-${contactId || contact.id || Date.now()}`;
-  const agreementId = `BUDDY-DEMO-${Date.now()}`;
+  const clientUserId = `ace-${contactId || contact.id || Date.now()}`;
+  const agreementId = `ACE-DEMO-${Date.now()}`;
   const publicBase = String(
-    env.PUBLIC_BASE_URL || "https://blackhole-concierge-worker.cryptocapitalgroupfl.workers.dev"
+    env.PUBLIC_BASE_URL || "https://ace-concierge-worker.cryptocapitalgroupfl.workers.dev"
   ).replace(/\/$/, "");
   const connectUrl = `${publicBase}/docusign/connect?contactId=${encodeURIComponent(contactId || contact.id || "")}`;
 
-  const envelope = buildDemoEnvelope({ contact, product, selectionNumber, agreementId });
+  const envelope = buildDemoEnvelope({
+    contact,
+    product,
+    selectionNumber,
+    agreementId,
+    brandName: String(env.BRAND_NAME || "ACE Host"),
+    assistantName: String(env.ASSISTANT_NAME || "ACE AI"),
+  });
   const signer = envelope?.recipients?.signers?.[0];
-  if (!signer) throw new Error("Buddy demo envelope is missing a signer");
+  if (!signer) throw new Error("ACE demo envelope is missing a signer");
 
   signer.clientUserId = clientUserId;
   envelope.eventNotification.url = connectUrl;

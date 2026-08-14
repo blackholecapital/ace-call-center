@@ -2,7 +2,7 @@
 
 ## Decision
 
-ACE Host is a dedicated logical production environment of the existing worker code, not a fork of the application and not a worker stack per franchise location.
+ACE Host is a dedicated production stack using the proven worker code, not a worker stack per franchise location. Because this repository belongs to ACE Host, ACE resource names are the top-level Wrangler defaults. There is no production `blackhole-*` target in its TOML files.
 
 | Layer | ACE isolation | Franchise/location model |
 | --- | --- | --- |
@@ -14,7 +14,17 @@ ACE Host is a dedicated logical production environment of the existing worker co
 | Archive | `ace-call-center-archive` | Private prefixes under `tenants/ace-host/` |
 | Analytics | ACE-only Analytics Engine datasets | `tenantId` is the index; corporate/location are blobs |
 
-This keeps the existing Black Hole workers and their data untouched. It also avoids deploying five workers for every branch. A very large customer can later be promoted to another dedicated Wrangler environment without changing the data contract.
+This keeps the existing Black Hole workers and their data untouched and avoids deploying five workers for every branch. A very large customer can later be promoted to its own repository or explicit Wrangler environment without changing the data contract.
+
+## Deployment guardrail
+
+`wrangler deploy` from this repository targets ACE workers only. Before any release, this command must return no matches:
+
+```bash
+rg 'name = "blackhole-|service = "blackhole-|queue = "blackhole-|database_name = "blackhole-' apps/*/wrangler.toml
+```
+
+The two D1 placeholders intentionally prevent a first production deployment until ACE databases have been created and their IDs copied into the TOMLs.
 
 ## Resource topology
 
@@ -56,7 +66,7 @@ Analytics Engine datasets are declared in the Wrangler environments and are crea
 
 ## 2. Configure ACE secrets
 
-Use `npx wrangler secret put NAME --env ace --config path/to/wrangler.toml`. The `INTERNAL_CALL_SECRET` value must be identical on dashboard, concierge, and voice.
+Use `npx wrangler secret put NAME --config path/to/wrangler.toml`. The `INTERNAL_CALL_SECRET` value must be identical on dashboard, concierge, and voice.
 
 | Worker | Secrets |
 | --- | --- |
@@ -69,7 +79,7 @@ Use `npx wrangler secret put NAME --env ace --config path/to/wrangler.toml`. The
 Example:
 
 ```bash
-npx wrangler secret put INTERNAL_CALL_SECRET --env ace --config apps/voice-worker/wrangler.toml
+npx wrangler secret put INTERNAL_CALL_SECRET --config apps/voice-worker/wrangler.toml
 ```
 
 Never place secret values in a TOML file or commit them to Git.
@@ -77,11 +87,11 @@ Never place secret values in a TOML file or commit them to Git.
 ## 3. Deploy in dependency order
 
 ```bash
-npx wrangler deploy --env ace --config apps/sms-worker/wrangler.toml
-npx wrangler deploy --env ace --config apps/email-worker/wrangler.toml
-npx wrangler deploy --env ace --config apps/voice-worker/wrangler.toml
-npx wrangler deploy --env ace --config apps/blackhole-concierge-worker/wrangler.toml
-npx wrangler deploy --env ace --config apps/dashboard/wrangler.toml
+npx wrangler deploy --config apps/sms-worker/wrangler.toml
+npx wrangler deploy --config apps/email-worker/wrangler.toml
+npx wrangler deploy --config apps/voice-worker/wrangler.toml
+npx wrangler deploy --config apps/blackhole-concierge-worker/wrangler.toml
+npx wrangler deploy --config apps/dashboard/wrangler.toml
 
 npm --prefix apps/frontend run build
 npx wrangler pages deploy apps/frontend/dist --project-name ace-call-center --config apps/frontend/wrangler.toml
@@ -127,7 +137,7 @@ Create a new Wrangler environment only when a corporate tenant requires one or m
 - independent release timing;
 - materially different capacity or compliance controls.
 
-For that case, copy `[env.ace]` to `[env.<tenant-slug>]`, change every worker/resource name and URL, provision new D1/Queue/R2 resources, and keep the same tenant/corporate/location event contract.
+For that case, add `[env.<tenant-slug>]` consistently to every worker, change every worker/resource name and URL, provision new D1/Queue/R2 resources, and keep the same tenant/corporate/location event contract. Environment bindings are explicit and must all be repeated; never rely on production bindings to inherit.
 
 ## Intentionally excluded
 

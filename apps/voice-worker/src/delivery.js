@@ -95,7 +95,7 @@ export function chooseDeliveryOption(text, options = []) {
 }
 
 export function describeDeliveryOptions(options = []) {
-  if (!options.length) return "I don't have an open delivery slot showing right now.";
+  if (!options.length) return "I don't have an open implementation consultation showing right now.";
   const labels = options.slice(0, 3).map((o, i) => `option ${i + 1}, ${spokenLabel(o)}`);
   if (labels.length === 1) return `I have ${labels[0]}. Does that work for you?`;
   if (labels.length === 2) return `I have ${labels[0]}, or ${labels[1]}. Which works better for you?`;

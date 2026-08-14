@@ -103,7 +103,8 @@ export async function createDeliveryEvent(env, { contact = {}, product = {}, sta
   const calendarId = googleCalendarId(env);
   const tz = timeZone || googleCalendarTimeZone(env);
   const fullName = `${contact.firstName || ""} ${contact.lastName || ""}`.trim() || "Customer";
-  const summary = `Buddy Delivery - ${fullName}`;
+  const brand = String(env.BRAND_NAME || "ACE Host");
+  const summary = `${brand} Implementation Consultation - ${fullName}`;
   const description = [
     `Customer: ${fullName}`,
     `Product: ${product.name || contact.selectedProduct || contact.interest || ""}`,
@@ -128,8 +129,8 @@ export async function createDeliveryEvent(env, { contact = {}, product = {}, sta
         end: { dateTime: endIso, timeZone: tz },
         extendedProperties: {
           private: {
-            buddyContactId: String(contactId || contact.id || ""),
-            buddyProduct: String(product.name || contact.selectedProduct || ""),
+            aceContactId: String(contactId || contact.id || ""),
+            aceService: String(product.name || contact.selectedProduct || ""),
           },
         },
       }),

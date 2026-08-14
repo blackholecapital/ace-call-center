@@ -112,11 +112,11 @@ export async function openAiTwilioAudio(env, text) {
   if (!apiKey) throw new Error("OPENAI_API_KEY is not configured");
 
   const model = String(env.BUDDY_OPENAI_TTS_MODEL || "gpt-4o-mini-tts").trim();
-  const voice = String(env.BUDDY_OPENAI_TTS_VOICE || "cedar").trim();
+  const voice = String(env.BUDDY_OPENAI_TTS_VOICE || "marin").trim();
   const speed = Number(env.BUDDY_OPENAI_TTS_SPEED || 1);
   const instructions = String(
     env.BUDDY_OPENAI_TTS_INSTRUCTIONS ||
-      "Speak as a polished, confident American male retail concierge. Warm, calm, and conversational. Use smooth consonants and softened sibilance, with no hiss or sharp S sounds. Avoid announcer cadence and exaggerated brightness. Use natural phrasing and subtle pauses."
+      "Speak as a warm, calm, confident American woman representing ACE Host. Sound natural, polished, and conversational, with gentle pacing, clear phrasing, and subtle pauses. Avoid an announcer cadence, exaggerated brightness, and hard sibilance."
   ).trim();
 
   const body = {

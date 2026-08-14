@@ -55,25 +55,25 @@ export default {
       subject = `Your ${brand} agreement is ready to sign`;
       html = shell(env, "Your agreement is ready", `
         <h2 style="margin-top:0;color:${esc(accent)};">Hi ${esc(contact.firstName || "there")},</h2>
-        <p>Great choice on the <strong>${esc(productName)}</strong>. Your demo rental agreement is ready for review and signature.</p>
+        <p>Your <strong>${esc(productName)}</strong> demo services agreement is ready for review and signature.</p>
         <div style="margin:28px 0;text-align:center;"><a href="${esc(signingUrl)}" style="display:inline-block;background:${esc(accent)};color:#fff;text-decoration:none;font-weight:700;padding:14px 24px;border-radius:6px;">Review &amp; Sign Agreement</a></div>
-        <p>Once the agreement is signed, ${esc(assistant)} will confirm it and we can move directly to delivery scheduling.</p>`);
+        <p>Once the agreement is signed, ${esc(assistant)} will confirm it and help schedule your implementation consultation.</p>`);
     } else if (messageType === "buddy-docusign-signed") {
-      subject = `${brand} agreement signed - next up: delivery`;
+      subject = `${brand} agreement signed - next up: implementation`;
       html = shell(env, "Agreement signed", `
         <h2 style="margin-top:0;color:${esc(accent)};">You're all set, ${esc(contact.firstName || "there")}.</h2>
         <p>We received your signed agreement${productName ? ` for the <strong>${esc(productName)}</strong>` : ""}.</p>
-        <p>${esc(assistant)} can now help you choose a delivery date and time.</p>`);
+        <p>${esc(assistant)} can now help you choose an implementation consultation date and time.</p>`);
     } else if (messageType === "buddy-delivery-confirmed") {
-      subject = `Your ${brand} delivery is scheduled`;
-      html = shell(env, "Delivery scheduled", `
-        <h2 style="margin-top:0;color:${esc(accent)};">Delivery confirmed, ${esc(contact.firstName || "there")}.</h2>
-        <p>Your <strong>${esc(productName)}</strong> delivery is scheduled for:</p>
+      subject = `Your ${brand} implementation consultation is scheduled`;
+      html = shell(env, "Implementation scheduled", `
+        <h2 style="margin-top:0;color:${esc(accent)};">Consultation confirmed, ${esc(contact.firstName || "there")}.</h2>
+        <p>Your <strong>${esc(productName)}</strong> implementation consultation is scheduled for:</p>
         <div style="margin:24px 0;padding:20px;background:#f5f8ff;border:1px solid #cfdcf5;border-radius:8px;text-align:center;">
           <div style="font-size:20px;font-weight:700;color:${esc(accent)};">${esc(delivery.label || delivery.start || contact.deliveryAt || "Scheduled")}</div>
           ${contact.location ? `<div style="margin-top:8px;color:#555;">${esc(contact.location)}</div>` : ""}
         </div>
-        <p>${esc(assistant)} has added this delivery to the scheduling calendar. If anything changes, a team member can update the appointment from the operations dashboard.</p>`);
+        <p>${esc(assistant)} has added this consultation to the scheduling calendar. If anything changes, a team member can update the appointment from the operations dashboard.</p>`);
     } else {
       const callNowBlock = callNowUrl ? `
         <div style="margin:30px 0;padding:24px;background:#f5f8ff;border:1px solid #cfdcf5;border-radius:8px;text-align:center;">

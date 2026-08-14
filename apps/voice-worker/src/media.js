@@ -43,7 +43,7 @@ async function runtimeTwilioAudio(env,text){
 async function conciergeRequest(env,path,payload){
   const secret=String(env.INTERNAL_CALL_SECRET||""); if(!secret)throw new Error("INTERNAL_CALL_SECRET is not configured for concierge handoff");
   const req=new Request(`https://concierge.internal${path}`,{method:"POST",headers:{"content-type":"application/json","x-internal-call-secret":secret},body:JSON.stringify(payload)});
-  const publicBase=String(env.CONCIERGE_PUBLIC_URL||"https://blackhole-concierge-worker.cryptocapitalgroupfl.workers.dev").replace(/\/$/,"");
+  const publicBase=String(env.CONCIERGE_PUBLIC_URL||"https://ace-concierge-worker.cryptocapitalgroupfl.workers.dev").replace(/\/$/,"");
   const r=env.CONCIERGE?await env.CONCIERGE.fetch(req):await fetch(`${publicBase}${path}`,{method:"POST",headers:{"content-type":"application/json","x-internal-call-secret":secret},body:JSON.stringify(payload)});
   const t=await r.text();let d={};try{d=t?JSON.parse(t):{};}catch{d={raw:t};}if(!r.ok||d?.ok===false){console.error("Concierge handoff rejected",{path,status:r.status,body:d,via:env.CONCIERGE?"service-binding":"public-fetch"});throw new Error(d?.error||`Concierge request failed (${r.status})`);}return d;
 }
@@ -56,6 +56,7 @@ async function completeTwilioCall(env,callSid){const a=String(env.TWILIO_ACCOUNT
 export function handleTwilioMediaSocket(request,env,ctx){
   if((request.headers.get("Upgrade")||"").toLowerCase()!=="websocket")return json({ok:false,error:"Expected Upgrade: websocket"},426);
   const pair=new WebSocketPair(); const [client,server]=Object.values(pair); server.accept();
+  const brand=String(env.BRAND_NAME||"ACE Host");
   const state={
     connectedAt:Date.now(),streamSid:"",callSid:"",accountSid:"",contactId:"",firstName:"",lastName:"",phone:"",email:"",interest:"",location:"",comments:"",leadScore:"",preferredContactTime:"",tenantId:String(env.TENANT_ID||"blackhole"),corporateId:String(env.CORPORATE_ID||env.TENANT_ID||"blackhole"),locationId:String(env.DEFAULT_LOCATION_ID||"corporate"),
     mediaChunks:0,mediaBytes:0,lastTimestamp:"",lastSequenceNumber:"",transcriptCount:0,stt:null,utteranceParts:[],turnGeneration:0,responseCount:0,
@@ -97,15 +98,15 @@ export function handleTwilioMediaSocket(request,env,ctx){
             const selected=options[choiceIndex]; state.selectedProduct=selected; state.awaitingProductChoice=false;
             const payload={type:"buddy.product.selected",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,firstName:state.firstName,lastName:state.lastName,phone:state.phone,email:state.email,category:state.interest,interest:state.interest,location:state.location,comments:state.comments,leadScore:state.leadScore,preferredContactTime:state.preferredContactTime,selectionNumber:choiceIndex+1,productId:selected.id,productName:selected.name};
             pushEvent(payload);
-            await speak(`Great choice${state.firstName?`, ${state.firstName}`:""}. I've got you down for the ${selected.name}. I'm getting your agreement ready now.`,generation,"buddy.product.selection-preparing");
+            await speak(`Great choice${state.firstName?`, ${state.firstName}`:""}. I've got you down for ${selected.name}. I'm preparing your ACE Host service proposal now.`,generation,"buddy.product.selection-preparing");
             try{
               const result=await notifyProductSelection(env,payload); state.documentStatus="Sent";
               const smsOk=result?.sms?.ok===true,emailOk=result?.email?.ok===true;
               console.log("Buddy product selection handed to concierge",{contactId:state.contactId,productName:selected.name,envelopeId:result?.docusign?.envelopeId||"",smsOk,emailOk});
               if(generation!==state.turnGeneration)return;
-              const sent=smsOk&&emailOk?"I sent the agreement to your phone and email.":emailOk?"I sent the agreement to your email.":smsOk?"I sent the agreement to your phone.":"I created your agreement, but the delivery message did not go through.";
+              const sent=smsOk&&emailOk?"I sent the service proposal to your phone and email.":emailOk?"I sent the service proposal to your email.":smsOk?"I sent the service proposal to your phone.":"I created your service proposal, but the notification did not go through.";
               await speak(`${sent} Sign it, then wait for the confirmation text that says we received your documents before coming back to the call. It usually takes about 30 seconds.`,generation,"buddy.product.selection-sent");
-            }catch(error){console.error("Buddy product selection handoff failed",{contactId:state.contactId,productName:selected.name,error:error?.message||String(error)});if(generation===state.turnGeneration)await speak("I saved your product choice, but I'm having trouble generating the agreement right now. Please give me a moment.",generation,"buddy.product.selection-failed");}
+            }catch(error){console.error("Buddy product selection handoff failed",{contactId:state.contactId,productName:selected.name,error:error?.message||String(error)});if(generation===state.turnGeneration)await speak("I saved your service choice, but I'm having trouble generating the proposal right now. Please give me a moment.",generation,"buddy.product.selection-failed");}
             return;
           }
 
@@ -118,7 +119,7 @@ export function handleTwilioMediaSocket(request,env,ctx){
 
         if(state.selectedProduct&&state.contactId){
           const status=await getContactStatus(env,state.contactId); if(status?.documentStatus)state.documentStatus=status.documentStatus;if(status?.deliveryAt)state.deliveryScheduled=true;
-          if(state.deliveryScheduled){await speak(`You're all set${state.firstName?`, ${state.firstName}`:""}. Your delivery is already scheduled. Thanks for calling Buddy's. Have a great day.`,generation,"buddy.delivery.already-scheduled");if(ctx?.waitUntil)ctx.waitUntil((async()=>{await sleep(12000);await completeTwilioCall(env,state.callSid);})());return;}
+          if(state.deliveryScheduled){await speak(`You're all set${state.firstName?`, ${state.firstName}`:""}. Your implementation appointment is already scheduled. Thanks for calling ${brand}. Have a great day.`,generation,"buddy.delivery.already-scheduled");if(ctx?.waitUntil)ctx.waitUntil((async()=>{await sleep(12000);await completeTwilioCall(env,state.callSid);})());return;}
 
           if(String(state.documentStatus).toLowerCase()!=="signed"){
             if(mentionsSigned(clean)){
@@ -129,8 +130,8 @@ export function handleTwilioMediaSocket(request,env,ctx){
 
           if(!state.signatureAcknowledged){
             state.signatureAcknowledged=true;
-            try{const delivery=await getDeliveryOptions(env,state.contactId);state.deliveryOptions=delivery?.options||[];state.awaitingDeliveryChoice=state.deliveryOptions.length>0;await speak(`Perfect${state.firstName?`, ${state.firstName}`:""}. I have your signed agreement for the ${state.selectedProduct.name}. Let's get your delivery scheduled. ${describeDeliveryOptions(state.deliveryOptions)}`,generation,"buddy.docusign.signed-acknowledged");}
-            catch(error){console.error("Buddy delivery options failed",{contactId:state.contactId,error:error?.message||String(error)});await speak(`Perfect${state.firstName?`, ${state.firstName}`:""}. I have your signed agreement. I'm having trouble loading the live delivery calendar right now.`,generation,"buddy.delivery.options-failed");}
+            try{const delivery=await getDeliveryOptions(env,state.contactId);state.deliveryOptions=delivery?.options||[];state.awaitingDeliveryChoice=state.deliveryOptions.length>0;await speak(`Perfect${state.firstName?`, ${state.firstName}`:""}. I have your signed service agreement for ${state.selectedProduct.name}. Let's schedule your implementation consultation. ${describeDeliveryOptions(state.deliveryOptions)}`,generation,"buddy.docusign.signed-acknowledged");}
+            catch(error){console.error("Buddy delivery options failed",{contactId:state.contactId,error:error?.message||String(error)});await speak(`Perfect${state.firstName?`, ${state.firstName}`:""}. I have your signed service agreement. I'm having trouble loading the implementation calendar right now.`,generation,"buddy.delivery.options-failed");}
             return;
           }
 
@@ -139,13 +140,13 @@ export function handleTwilioMediaSocket(request,env,ctx){
             if(!selectedDelivery){const now=Date.now();if(now-state.lastClarifyAt>6000){state.lastClarifyAt=now;await speak(describeDeliveryOptions(state.deliveryOptions),generation,"buddy.delivery.choice-clarify");}return;}
             const spokenSelection=naturalDeliveryLabel(selectedDelivery);
             await speak(`Perfect. I'll put you down for ${spokenSelection}. Give me just a second while I add that to the calendar.`,generation,"buddy.delivery.scheduling");
-            try{const result=await scheduleDelivery(env,state.contactId,selectedDelivery);state.deliveryScheduled=true;state.awaitingDeliveryChoice=false;const scheduledOption={...selectedDelivery,startIso:result?.delivery?.start||selectedDelivery.startIso,timeZone:result?.delivery?.timeZone||selectedDelivery.timeZone};const label=naturalDeliveryLabel(scheduledOption);console.log("Buddy delivery scheduled",{contactId:state.contactId,calendarEventId:result?.delivery?.id||"",deliveryAt:result?.delivery?.start||selectedDelivery.startIso,smsOk:result?.sms?.ok??null,emailOk:result?.email?.ok??null});await speak(`You're confirmed for ${label}. I sent your confirmation by text and email. Thanks for calling Buddy's. Have a great day.`,generation,"buddy.delivery.confirmed");if(ctx?.waitUntil)ctx.waitUntil((async()=>{await sleep(14000);await completeTwilioCall(env,state.callSid);})());}
+            try{const result=await scheduleDelivery(env,state.contactId,selectedDelivery);state.deliveryScheduled=true;state.awaitingDeliveryChoice=false;const scheduledOption={...selectedDelivery,startIso:result?.delivery?.start||selectedDelivery.startIso,timeZone:result?.delivery?.timeZone||selectedDelivery.timeZone};const label=naturalDeliveryLabel(scheduledOption);console.log("Buddy delivery scheduled",{contactId:state.contactId,calendarEventId:result?.delivery?.id||"",deliveryAt:result?.delivery?.start||selectedDelivery.startIso,smsOk:result?.sms?.ok??null,emailOk:result?.email?.ok??null});await speak(`You're confirmed for ${label}. I sent your implementation confirmation by text and email. Thanks for calling ${brand}. Have a great day.`,generation,"buddy.delivery.confirmed");if(ctx?.waitUntil)ctx.waitUntil((async()=>{await sleep(14000);await completeTwilioCall(env,state.callSid);})());}
             catch(error){console.error("Buddy delivery scheduling failed",{contactId:state.contactId,error:error?.message||String(error)});try{const refreshed=await getDeliveryOptions(env,state.contactId);state.deliveryOptions=refreshed?.options||[];}catch{}await speak(`That time just got taken. ${describeDeliveryOptions(state.deliveryOptions)}`,generation,"buddy.delivery.conflict");}
             return;
           }
         }
 
-        const chat=await runtimeJson(env,"/chat",{text:`${clean}\n\nSYSTEM: Speak like a warm retail associate on a phone call. Use natural contractions and plain spoken English. Keep it to one short sentence unless the customer asks for detail. Do not repeat yourself. Do not list product options unless the user explicitly asks what choices are available. Never say times as 7.00 p.m.; say 7 p.m. instead. Avoid stiff phrases like 'finalizing those details' or 'shall we get started'.`,firstName:state.firstName,interest:state.interest,location:state.location,leadScore:state.leadScore});
+        const chat=await runtimeJson(env,"/chat",{text:`${clean}\n\nSYSTEM: You are the ACE Host AI solutions assistant for data-center infrastructure and business AI automation. Speak warmly and professionally on a phone call. Use natural contractions and plain spoken English. Keep it to one short sentence unless the prospect asks for detail. Do not repeat yourself. Do not list service options unless the user explicitly asks what choices are available. Never say times as 7.00 p.m.; say 7 p.m. instead. Avoid retail, furniture, rental-purchase, and delivery language.`,firstName:state.firstName,interest:state.interest,location:state.location,leadScore:state.leadScore});
         if(generation!==state.turnGeneration)return;const responseText=String(chat.response||"").trim();if(!responseText)throw new Error("Buddy runtime returned an empty response");
         const audio=await runtimeTwilioAudio(env,responseText);if(generation!==state.turnGeneration)return;state.responseCount+=1;sendTwilioAudio(audio,`buddy-${state.responseCount}-${Date.now()}`);console.log("Buddy response sent",{callSid:state.callSid,contactId:state.contactId,responseText,audioBytes:audio.length,latencyMs:Date.now()-startedAt});pushEvent({type:"buddy.turn.completed",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,response:responseText,audioBytes:audio.length,latencyMs:Date.now()-startedAt});
       }catch(error){console.error("Buddy turn failed",{callSid:state.callSid,contactId:state.contactId,error:error?.message||String(error)});pushEvent({type:"buddy.turn.failed",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,error:error?.message||String(error)});}
