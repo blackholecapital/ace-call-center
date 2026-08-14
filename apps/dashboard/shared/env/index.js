@@ -22,6 +22,11 @@ const SCHEMA = {
   DB_PATH: { type: "string", default: ".data/db.json" },
   SQLITE_PATH: { type: "string", default: ".data/followup.sqlite" },
   RUNTIME_TARGET: { type: "string", default: "node", allowed: ["node", "edge"] },
+  TENANT_ID: { type: "string", default: "blackhole" },
+  CORPORATE_ID: { type: "string", default: "blackhole" },
+  DEFAULT_LOCATION_ID: { type: "string", default: "corporate" },
+  TENANT_MODE: { type: "string", default: "single" },
+  BRAND_NAME: { type: "string", default: "Black Hole Capital" },
 };
 
 const SECRET_KEYS = Object.entries(SCHEMA)

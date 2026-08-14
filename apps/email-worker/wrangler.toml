@@ -1,8 +1,22 @@
-name = "blackhole-email-worker"
+name = "ace-email-worker"
 main = "src/index.js"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
+[vars]
+TENANT_ID = "ace-host"
+CORPORATE_ID = "ace-host"
+DEFAULT_LOCATION_ID = "corporate"
+TENANT_MODE = "corporate-franchise"
+BRAND_NAME = "ACE Host"
+BRAND_URL = "https://acehost.com"
+BRAND_PRIMARY_COLOR = "#e11919"
+ASSISTANT_NAME = "ACE AI"
+
 [[queues.producers]]
 binding = "EVENTS"
-queue = "blackhole-communication-events"
+queue = "ace-communication-events"
+
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "ace_message_events"

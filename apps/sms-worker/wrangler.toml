@@ -1,14 +1,27 @@
-name = "blackhole-sms-worker"
+name = "ace-sms-worker"
 main = "src/index.js"
 compatibility_date = "2026-08-10"
 compatibility_flags = ["nodejs_compat"]
 
-[[queues.producers]]
-binding = "EVENTS"
-queue = "blackhole-communication-events"
+[vars]
+TENANT_ID = "ace-host"
+CORPORATE_ID = "ace-host"
+DEFAULT_LOCATION_ID = "corporate"
+TENANT_MODE = "corporate-franchise"
+BRAND_NAME = "ACE Host"
+ASSISTANT_NAME = "ACE AI"
+PUBLIC_BASE_URL = "https://ace-sms-worker.cryptocapitalgroupfl.workers.dev"
 
 [observability]
 enabled = true
 
 [observability.logs]
 enabled = true
+
+[[queues.producers]]
+binding = "EVENTS"
+queue = "ace-communication-events"
+
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "ace_message_events"

@@ -33,9 +33,25 @@ function maskPhone(value = "") {
   return `${phone.slice(0, 3)}••••${phone.slice(-4)}`;
 }
 
+function tenantContext(env, event = {}) {
+  const payload = event.payload || {};
+  const contact = payload.contact || event.contact || {};
+  return {
+    tenantId:String(event.tenantId || payload.tenantId || env.TENANT_ID || "blackhole"),
+    corporateId:String(event.corporateId || payload.corporateId || env.CORPORATE_ID || env.TENANT_ID || "blackhole"),
+    locationId:String(event.locationId || payload.locationId || contact.locationId || contact.location_id || env.DEFAULT_LOCATION_ID || "corporate"),
+  };
+}
+
 async function emit(env, event) {
-  if (!env.EVENTS) return;
-  try { await env.EVENTS.send({ ...event, ts:Date.now() }); } catch (error) { console.error("Buddy SMS event emit failed", error); }
+  const tenant = tenantContext(env, event);
+  const tagged = { ...event, ...tenant, ts:Date.now() };
+  if (env.EVENTS) {
+    try { await env.EVENTS.send(tagged); } catch (error) { console.error("SMS event emit failed", error); }
+  }
+  if (env.ANALYTICS) {
+    try { env.ANALYTICS.writeDataPoint({ blobs:[event.type || "sms.event", event.contactId || "", event.messageType || "", tenant.tenantId, tenant.corporateId, tenant.locationId], doubles:[Date.now()], indexes:[tenant.tenantId] }); } catch {}
+  }
 }
 
 async function parseRequestBody(request) {
@@ -95,7 +111,7 @@ export default {
 
     if (url.pathname === "/" || url.pathname === "/api/health") {
       const from = normalizePhone(env.TWILIO_PHONE_NUMBER || "");
-      return json({ ok:true, service:"blackhole-sms-worker", provider:"twilio", health:"online", configured:Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER), fromNumberMasked:maskPhone(from), fromLast4:from.slice(-4) });
+      return json({ ok:true, service:env.TENANT_ID === "ace-host" ? "ace-sms-worker" : "blackhole-sms-worker", provider:"twilio", health:"online", tenant:tenantContext(env), configured:Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER), fromNumberMasked:maskPhone(from), fromLast4:from.slice(-4) });
     }
 
     if (url.pathname === "/internal/send" && request.method === "POST") {

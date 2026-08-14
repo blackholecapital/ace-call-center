@@ -12,7 +12,7 @@ module.exports = async ({ env }) => {
 
     concierge = {
       ok: false,
-      service: "blackhole-concierge-worker",
+      service: env.TENANT_ID === "ace-host" ? "ace-concierge-worker" : "blackhole-concierge-worker",
       health: "offline",
       error: String(err.message || err),
     };
@@ -25,6 +25,11 @@ module.exports = async ({ env }) => {
       dashboard: "online",
       runtime: "edge",
       version: env.APP_VERSION || "unknown",
+      tenant: {
+        tenantId:env.TENANT_ID || "blackhole",
+        corporateId:env.CORPORATE_ID || env.TENANT_ID || "blackhole",
+        defaultLocationId:env.DEFAULT_LOCATION_ID || "corporate",
+      },
     },
   };
 };

@@ -1,7 +1,12 @@
-name = "alley-concierge"
+name = "ace-call-center"
 
 pages_build_output_dir = "dist"
 
 [[services]]
 binding = "DASHBOARD"
-service = "blackhole-dashboard-worker"
+service = "ace-dashboard-worker"
+
+[vars]
+TENANT_ID = "ace-host"
+CORPORATE_ID = "ace-host"
+DEFAULT_LOCATION_ID = "corporate"

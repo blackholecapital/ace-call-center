@@ -2,6 +2,7 @@ const contacts = require("../../../layers/domain/contacts");
 
 const STAGES = ["New Lead", "Contacted", "Engaged", "Docs Sent", "Scheduled", "Closed"];
 const stageRank = (value) => Math.max(0, STAGES.indexOf(String(value || "New Lead")));
+const eventDb = (env) => env?.EVENTS_DB || env?.BUDDY_DB;
 
 function furthestStage(...values) {
   return values.filter(Boolean).sort((a, b) => stageRank(b) - stageRank(a))[0] || "New Lead";
@@ -27,9 +28,10 @@ function hydrate(row) {
 }
 
 async function buddyStates(env) {
-  if (!env?.BUDDY_DB) return [];
+  const binding = eventDb(env);
+  if (!binding) return [];
   try {
-    await env.BUDDY_DB.prepare(`
+    await binding.prepare(`
       CREATE TABLE IF NOT EXISTS buddy_contacts (
         contact_id TEXT PRIMARY KEY,
         phone TEXT,
@@ -37,7 +39,7 @@ async function buddyStates(env) {
         updated_at INTEGER NOT NULL
       )
     `).run();
-    await env.BUDDY_DB.prepare(`
+    await binding.prepare(`
       CREATE TABLE IF NOT EXISTS buddy_sms_sessions (
         phone TEXT PRIMARY KEY,
         contact_id TEXT NOT NULL,
@@ -47,8 +49,8 @@ async function buddyStates(env) {
     `).run();
 
     const [contactsRows, legacyRows] = await Promise.all([
-      env.BUDDY_DB.prepare(`SELECT contact_id, contact_json, updated_at FROM buddy_contacts ORDER BY updated_at DESC`).all(),
-      env.BUDDY_DB.prepare(`SELECT contact_id, contact_json, updated_at FROM buddy_sms_sessions ORDER BY updated_at DESC`).all(),
+      binding.prepare(`SELECT contact_id, contact_json, updated_at FROM buddy_contacts ORDER BY updated_at DESC`).all(),
+      binding.prepare(`SELECT contact_id, contact_json, updated_at FROM buddy_sms_sessions ORDER BY updated_at DESC`).all(),
     ]);
 
     const byId = new Map();
@@ -67,9 +69,10 @@ async function buddyStates(env) {
 
 async function workflowFacts(env) {
   const facts = new Map();
-  if (!env?.BUDDY_DB) return facts;
+  const binding = eventDb(env);
+  if (!binding) return facts;
   try {
-    const result = await env.BUDDY_DB.prepare(`
+    const result = await binding.prepare(`
       SELECT contact_id, event_type, payload_json, created_at
       FROM buddy_communication_events
       WHERE contact_id IS NOT NULL AND contact_id <> ''

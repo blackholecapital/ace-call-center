@@ -1,6 +1,8 @@
 
 # Wrangler
 .wrangler/
+.dev.vars*
+.env*
 
 # Backup files
 *.bak

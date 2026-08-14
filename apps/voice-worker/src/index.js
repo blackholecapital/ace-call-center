@@ -27,6 +27,15 @@ function compactParam(value = "", max = 240) {
   return String(value).replace(/\s+/g, " ").trim().slice(0, max);
 }
 
+function tenantContext(env, event = {}) {
+  const payload=event.payload||{},contact=payload.contact||event.contact||{};
+  return {
+    tenantId:String(event.tenantId||payload.tenantId||env.TENANT_ID||"blackhole"),
+    corporateId:String(event.corporateId||payload.corporateId||env.CORPORATE_ID||env.TENANT_ID||"blackhole"),
+    locationId:String(event.locationId||payload.locationId||contact.locationId||contact.location_id||env.DEFAULT_LOCATION_ID||"corporate"),
+  };
+}
+
 function basicAuth(accountSid, authToken) {
   return "Basic " + btoa(`${accountSid}:${authToken}`);
 }
@@ -63,9 +72,10 @@ async function parseBody(request) {
 }
 
 async function emitEvent(env, event) {
-  try { if (env.EVENTS) await env.EVENTS.send({ ...event, ts:Date.now() }); } catch (error) { console.error("queue event failed", error); }
+  const tenant=tenantContext(env,event),tagged={...event,...tenant,ts:Date.now()};
+  try { if (env.EVENTS) await env.EVENTS.send(tagged); } catch (error) { console.error("queue event failed", error); }
   try {
-    if (env.ANALYTICS) env.ANALYTICS.writeDataPoint({ blobs:[event.type || "voice.event", event.contactId || "", event.callSid || ""], doubles:[Date.now()] });
+    if (env.ANALYTICS) env.ANALYTICS.writeDataPoint({ blobs:[event.type || "voice.event", event.contactId || "", event.callSid || "",tenant.tenantId,tenant.corporateId,tenant.locationId], doubles:[Date.now()], indexes:[tenant.tenantId] });
   } catch (error) { console.error("analytics event failed", error); }
 }
 
@@ -110,7 +120,7 @@ async function forwardSmsReply(env, body) {
 
   const response = env.CONCIERGE
     ? await env.CONCIERGE.fetch(request)
-    : await fetch("https://blackhole-concierge-worker.cryptocapitalgroupfl.workers.dev/internal/sms-reply", {
+    : await fetch(`${String(env.CONCIERGE_PUBLIC_URL || "https://ace-concierge-worker.cryptocapitalgroupfl.workers.dev").replace(/\/$/, "")}/internal/sms-reply`, {
         method:"POST",
         headers:{ "content-type":"application/json", "x-internal-call-secret":secret },
         body:JSON.stringify(payload),
@@ -138,6 +148,7 @@ function buildRealtimeTwiml(env, context) {
     ["contactId", context.contactId], ["firstName", context.firstName], ["lastName", context.lastName],
     ["email", context.email], ["phone", context.phone], ["interest", context.interest], ["location", context.location],
     ["comments", context.comments], ["leadScore", context.leadScore], ["preferredContactTime", context.preferredContactTime],
+    ["tenantId", context.tenantId], ["corporateId", context.corporateId], ["locationId", context.locationId],
   ];
   const customParameters = params
     .filter(([, value]) => value !== undefined && value !== null && String(value) !== "")
@@ -146,8 +157,9 @@ function buildRealtimeTwiml(env, context) {
   return `<Response>\n  <Connect>\n    <Stream url="${escapeXml(streamUrl)}" statusCallback="${escapeXml(streamStatusUrl)}" statusCallbackMethod="POST">\n${customParameters}\n    </Stream>\n  </Connect>\n</Response>`;
 }
 
-function buildFallbackTwiml(context) {
-  return `<Response><Pause length="1"/><Say voice="Polly.Joanna">Hi ${escapeXml(context.firstName)}. This is Buddy, your personal shopping assistant from Buddy's Home Furnishings. I saw that you're interested in ${escapeXml(context.interest)}. I'm calling because you asked to speak with me. The live conversational assistant is connecting now.</Say><Pause length="1"/><Say voice="Polly.Joanna">Thanks. This test confirms that your lead information successfully reached the voice system.</Say></Response>`;
+function buildFallbackTwiml(env, context) {
+  const assistant=escapeXml(env.ASSISTANT_NAME||"AI Concierge"),brand=escapeXml(env.BRAND_NAME||"Black Hole Capital");
+  return `<Response><Pause length="1"/><Say voice="Polly.Joanna">Hi ${escapeXml(context.firstName)}. This is ${assistant}, the ${brand} AI assistant. I saw that you're interested in ${escapeXml(context.interest)}. I'm calling because you asked to speak with me. The live conversational assistant is connecting now.</Say><Pause length="1"/><Say voice="Polly.Joanna">Thanks. Your lead information successfully reached our voice system.</Say></Response>`;
 }
 
 export default {
@@ -157,7 +169,7 @@ export default {
     if (url.pathname === "/twilio/media") return handleTwilioMediaSocket(request, env, ctx);
 
     if (url.pathname === "/" || url.pathname === "/health") {
-      return json({ ok:true, service:"blackhole-voice-worker", status:"online", voice:"twilio", realtime:String(env.MEDIA_STREAM_URL || "").startsWith("wss://") ? "configured" : "fallback", mediaBridge:"ready", conciergeBinding:Boolean(env.CONCIERGE) });
+      return json({ ok:true, service:env.TENANT_ID === "ace-host" ? "ace-voice-worker" : "blackhole-voice-worker", status:"online", tenant:tenantContext(env), voice:"twilio", realtime:String(env.MEDIA_STREAM_URL || "").startsWith("wss://") ? "configured" : "fallback", mediaBridge:"ready", conciergeBinding:Boolean(env.CONCIERGE) });
     }
 
     if (url.pathname === "/twilio/sms" && request.method === "POST") {
@@ -195,9 +207,9 @@ export default {
       const authToken = env.TWILIO_AUTH_TOKEN;
       const fromNumber = env.TWILIO_PHONE_NUMBER;
       if (!accountSid || !authToken || !fromNumber) return json({ ok:false, error:"Twilio secrets are not configured" }, 500);
-      const context = { contactId, firstName, lastName, email, phone, interest, location, comments, leadScore, preferredContactTime };
+      const context = { contactId, firstName, lastName, email, phone, interest, location, comments, leadScore, preferredContactTime, ...tenantContext(env, payload) };
       const realtimeTwiml = buildRealtimeTwiml(env, context);
-      const twiml = realtimeTwiml || buildFallbackTwiml(context);
+      const twiml = realtimeTwiml || buildFallbackTwiml(env, context);
       const mode = realtimeTwiml ? "media-stream" : "fallback-say";
       const callbackUrl = `${env.PUBLIC_BASE_URL}/twilio/status?contactId=${encodeURIComponent(contactId)}`;
       const params = new URLSearchParams();
@@ -239,7 +251,7 @@ export default {
     if (url.pathname === "/twilio/answer") {
       const realtimeTwiml = buildRealtimeTwiml(env, { contactId:"", firstName:"there", interest:"your recent inquiry", location:"", leadScore:"" });
       if (realtimeTwiml) return xml(realtimeTwiml);
-      return xml(`<Response><Say voice="Polly.Joanna">Buddy voice service is online.</Say></Response>`);
+      return xml(`<Response><Say voice="Polly.Joanna">${escapeXml(env.ASSISTANT_NAME || "AI Concierge")} voice service is online.</Say></Response>`);
     }
 
     return json({ ok:false, error:"Route not found", path:url.pathname }, 404);

@@ -22,7 +22,7 @@ type LeadAction = "email" | "call" | "sms" | "document" | "calendar";
 
 const stages:Stage[]=["New Inquiry","Qualified","Site Review","Proposal Sent","Contracting","Provisioning","Live Account"];
 const products=["All ACE products","Dedicated Servers","Colocation Hosting","Full Rack Colocation","Crypto Mining Facility","Managed Services","VPS Hosting","Wireless Infrastructure","Telehealth Infrastructure","AI Automations"];
-const DOC_BASE="https://blackhole-concierge-worker.cryptocapitalgroupfl.workers.dev/docusign/document";
+const DOC_BASE="https://ace-concierge-worker.cryptocapitalgroupfl.workers.dev/docusign/document";
 const ACE_TZ="America/New_York";
 const demoLeads:Lead[]=[
   {id:"ace-1",firstName:"Demo",lastName:"Lead 01",company:"Sample Colocation Prospect",selectedProduct:"Full Rack Colocation",location:"Tampa Bay",stage:"Qualified",score:92,source:"ACEHost.com",callStatus:"Connected",documentStatus:"Not sent",value:18000},
@@ -106,7 +106,7 @@ export default function App(){
     </aside>
 
     <main className="workspace">
-      <header className="topbar"><div><span className="eyebrow">ACE HOST · INFRASTRUCTURE SALES</span><h1>AI Call Center</h1><p>From first inquiry to a fully provisioned account.</p></div><div className="top-actions"><div className="search"><Search size={17}/><span>Search accounts, services, calls...</span></div><div className="system-pill"><span/> Systems online</div><div className="avatar">AH</div></div></header>
+      <header className="topbar"><div><span className="eyebrow">ACE HOST · INFRASTRUCTURE SALES</span><h1>AI Call Center</h1><p>From first inquiry to a fully provisioned account.</p></div><div className="top-actions"><div className="search"><Search size={17}/><span>Search accounts, services, calls...</span></div><div className="scope-pill"><Building2 size={13}/> Corporate · All locations</div><div className="system-pill"><span/> Systems online</div><div className="avatar">AH</div></div></header>
       <section className="kpis"><Kpi label="Open Opportunities" value={metrics.total} icon={<Users/>}/><Kpi label="Qualified" value={metrics.qualified} icon={<Gauge/>}/><Kpi label="Contracting" value={metrics.contracting} icon={<FileSignature/>}/><Kpi label="Live Accounts" value={metrics.liveAccounts} icon={<Server/>}/><Kpi label="Pipeline Value" value={metrics.pipeline.toLocaleString("en-US",{style:"currency",currency:"USD",maximumFractionDigits:0})} icon={<CircleDollarSign/>}/></section>
 
       {view==="Operations"&&<><div className="tabbar">{(["Pipeline","Leads","Contracts","Installations"] as Tab[]).map(t=><button key={t} onClick={()=>setTab(t)} className={tab===t?"tab active":"tab"}>{t}</button>)}</div><div className="content-shell"><section className="content-main">{tab==="Pipeline"&&<Pipeline leads={leads} onSelect={setSelected} onAction={act}/>} {tab==="Leads"&&<Leads leads={leads} onSelect={setSelected} onAction={act}/>} {tab==="Contracts"&&<Contracts leads={leads} onSelect={setSelected}/>} {tab==="Installations"&&<Installations leads={leads} onSelect={setSelected}/>}</section><LeadDetail lead={selected} onAction={act}/></div></>}

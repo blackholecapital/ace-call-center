@@ -1,21 +1,26 @@
-name = "blackhole-voice-worker"
+name = "ace-voice-worker"
 main = "src/index.js"
 compatibility_date = "2026-08-08"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
-PUBLIC_BASE_URL = "https://blackhole-voice-worker.cryptocapitalgroupfl.workers.dev"
-MEDIA_STREAM_URL = "wss://blackhole-voice-worker.cryptocapitalgroupfl.workers.dev/twilio/media"
+TENANT_ID = "ace-host"
+CORPORATE_ID = "ace-host"
+DEFAULT_LOCATION_ID = "corporate"
+TENANT_MODE = "corporate-franchise"
+TENANT_PROFILE = "data-center"
+BRAND_NAME = "ACE Host"
+ASSISTANT_NAME = "ACE AI"
+CONCIERGE_PUBLIC_URL = "https://ace-concierge-worker.cryptocapitalgroupfl.workers.dev"
+PUBLIC_BASE_URL = "https://ace-voice-worker.cryptocapitalgroupfl.workers.dev"
+MEDIA_STREAM_URL = "wss://ace-voice-worker.cryptocapitalgroupfl.workers.dev/twilio/media"
 DEEPGRAM_STT_MODEL = "nova-3"
 DEEPGRAM_ENDPOINTING_MS = "300"
 BUDDY_RUNTIME_URL = "https://erkn5tqy74wqqi-8000.proxy.runpod.net"
 BUDDY_OPENAI_TTS_MODEL = "gpt-4o-mini-tts"
-BUDDY_OPENAI_TTS_VOICE = "cedar"
+BUDDY_OPENAI_TTS_VOICE = "marin"
 BUDDY_OPENAI_TTS_SPEED = "1.0"
-
-[[services]]
-binding = "CONCIERGE"
-service = "blackhole-concierge-worker"
+BUDDY_OPENAI_TTS_INSTRUCTIONS = "Speak as a warm, calm, confident American woman representing ACE Host. Sound natural, polished, and conversational, with gentle pacing, clear phrasing, and subtle pauses. Avoid an announcer cadence, exaggerated brightness, and hard sibilance."
 
 [observability]
 enabled = true
@@ -28,8 +33,8 @@ binding = "CF_VERSION_METADATA"
 
 [[queues.producers]]
 binding = "EVENTS"
-queue = "blackhole-communication-events"
+queue = "ace-communication-events"
 
 [[analytics_engine_datasets]]
 binding = "ANALYTICS"
-dataset = "blackhole_voice_events"
+dataset = "ace_voice_events"

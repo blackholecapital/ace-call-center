@@ -1,7 +1,7 @@
-# Cloudflare Module Worker configuration
-# API/webhook surface runs on edge. Background jobs run via Queue consumer.
+# ACE Host Cloudflare Module Worker configuration.
+# A plain `wrangler deploy` from this repository targets ACE-only resources.
 
-name = "blackhole-dashboard-worker"
+name = "ace-dashboard-worker"
 main = "worker-entry.mjs"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
@@ -13,57 +13,56 @@ run_worker_first = true
 not_found_handling = "single-page-application"
 
 [vars]
-APP_VERSION = "pass-6-edge"
+APP_VERSION = "ace-corporate-v1"
 NODE_ENV = "production"
 LOG_LEVEL = "info"
 LOG_FORMAT = "json"
 DB_BACKEND = "d1"
 RUNTIME_TARGET = "edge"
+TENANT_ID = "ace-host"
+CORPORATE_ID = "ace-host"
+DEFAULT_LOCATION_ID = "corporate"
+TENANT_MODE = "corporate-franchise"
+TENANT_PROFILE = "data-center"
+BRAND_NAME = "ACE Host"
+ASSISTANT_NAME = "ACE AI"
+DASHBOARD_PUBLIC_URL = "https://ace-dashboard-worker.cryptocapitalgroupfl.workers.dev"
 
-# --- Dashboard D1 Database ---
 [[d1_databases]]
 binding = "DB"
-database_name = "alley-concierge-db"
-database_id = "054a6113-0f95-4801-be09-78461cc32ec5"
+database_name = "ace-call-center-dashboard"
+database_id = "REPLACE_WITH_ACE_DASHBOARD_D1_ID"
 
-# Authoritative Buddy workflow/session state written by blackhole-concierge-worker.
 [[d1_databases]]
 binding = "BUDDY_DB"
-database_name = "blackhole-message-track-db"
-database_id = "4ae89ff5-fb34-446d-941f-d14c3e5db3f1"
+database_name = "ace-call-center-events"
+database_id = "REPLACE_WITH_ACE_EVENTS_D1_ID"
 
-# --- Queues ---
-# Dashboard only produces follow-up jobs. The existing followup-jobs consumer is owned elsewhere.
+[[r2_buckets]]
+binding = "TENANT_ARCHIVE"
+bucket_name = "ace-call-center-archive"
+
 [[queues.producers]]
-queue = "followup-jobs"
 binding = "FOLLOWUP_QUEUE"
+queue = "ace-followup-jobs"
 
-# Voice/concierge communication telemetry, used for transcripts and activity history.
 [[queues.consumers]]
-queue = "blackhole-communication-events"
+queue = "ace-followup-jobs"
 max_batch_size = 20
 max_retries = 3
+dead_letter_queue = "ace-followup-jobs-dlq"
 
-# --- Development overrides ---
-[env.dev]
-name = "blackhole-dashboard-worker-dev"
+[[queues.consumers]]
+queue = "ace-communication-events"
+max_batch_size = 50
+max_batch_timeout = 5
+max_retries = 3
+dead_letter_queue = "ace-communication-events-dlq"
 
-[env.dev.vars]
-APP_VERSION = "pass-6-edge-dev"
-NODE_ENV = "development"
-LOG_LEVEL = "debug"
-LOG_FORMAT = "text"
-DB_BACKEND = "memory"
-
-[[env.dev.d1_databases]]
-binding = "DB"
-database_name = "followup-db"
-database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-
-[[env.dev.queues.producers]]
-queue = "followup-jobs"
-binding = "FOLLOWUP_QUEUE"
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "ace_dashboard_events"
 
 [[services]]
 binding = "CONCIERGE"
-service = "blackhole-concierge-worker"
+service = "ace-concierge-worker"
