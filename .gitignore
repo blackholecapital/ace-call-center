@@ -3,6 +3,13 @@
 .wrangler/
 .dev.vars*
 .env*
+!.env.example
+__pycache__/
+*.py[cod]
 
 # Backup files
 *.bak
+
+# Biometric/reference voice material stays on the runtime host.
+apps/eila-voice-runtime/assets/voices/**/*.wav
+apps/eila-voice-runtime/assets/voices/**/*.mp3
