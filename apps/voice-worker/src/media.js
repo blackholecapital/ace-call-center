@@ -102,7 +102,7 @@ export function handleTwilioMediaSocket(request,env,ctx){
   async function speak(text,generation,eventType="buddy.turn.completed"){
     const audio=await runtimeTwilioAudio(env,text); if(generation!==state.turnGeneration)return;
     state.responseCount+=1; sendTwilioAudio(audio,`buddy-${state.responseCount}-${Date.now()}`);
-    console.log("Buddy deterministic response sent",{callSid:state.callSid,contactId:state.contactId,responseText:text,audioBytes:audio.length});
+    console.log("Alley voice response sent",{callSid:state.callSid,contactId:state.contactId,responseText:text,audioBytes:audio.length,eventType});
     pushEvent({type:eventType,callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,response:text,audioBytes:audio.length});
   }
   function offerText(options){
