@@ -10,7 +10,7 @@ DEFAULT_LOCATION_ID = "corporate"
 TENANT_MODE = "corporate-franchise"
 TENANT_PROFILE = "data-center"
 BRAND_NAME = "ACE Host"
-ASSISTANT_NAME = "ACE AI"
+ASSISTANT_NAME = "Alley"
 CONCIERGE_PUBLIC_URL = "https://ace-concierge-worker.cryptocapitalgroupfl.workers.dev"
 PUBLIC_BASE_URL = "https://ace-voice-worker.cryptocapitalgroupfl.workers.dev"
 MEDIA_STREAM_URL = "wss://ace-voice-worker.cryptocapitalgroupfl.workers.dev/twilio/media"
@@ -20,7 +20,7 @@ BUDDY_RUNTIME_URL = "https://erkn5tqy74wqqi-8000.proxy.runpod.net"
 BUDDY_OPENAI_TTS_MODEL = "gpt-4o-mini-tts"
 BUDDY_OPENAI_TTS_VOICE = "marin"
 BUDDY_OPENAI_TTS_SPEED = "1.0"
-BUDDY_OPENAI_TTS_INSTRUCTIONS = "Speak as a warm, calm, confident American woman representing ACE Host. Sound natural, polished, and conversational, with gentle pacing, clear phrasing, and subtle pauses. Avoid an announcer cadence, exaggerated brightness, and hard sibilance."
+BUDDY_OPENAI_TTS_INSTRUCTIONS = "Speak as Alley, a warm, confident British woman representing ACE Host. Use a clearly recognizable contemporary Southern British English accent throughout every sentence, never an American accent. Sound like a natural consultative salesperson on a real phone call: relaxed, polished, responsive, and conversational, with gentle pacing, clear phrasing, subtle pauses, and no announcer cadence."
 
 [observability]
 enabled = true

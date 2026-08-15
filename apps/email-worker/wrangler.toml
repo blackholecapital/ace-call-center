@@ -11,7 +11,7 @@ TENANT_MODE = "corporate-franchise"
 BRAND_NAME = "ACE Host"
 BRAND_URL = "https://acehost.com"
 BRAND_PRIMARY_COLOR = "#e11919"
-ASSISTANT_NAME = "ACE AI"
+ASSISTANT_NAME = "Alley"
 
 [[queues.producers]]
 binding = "EVENTS"

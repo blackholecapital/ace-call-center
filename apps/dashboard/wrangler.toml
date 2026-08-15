@@ -25,7 +25,7 @@ DEFAULT_LOCATION_ID = "corporate"
 TENANT_MODE = "corporate-franchise"
 TENANT_PROFILE = "data-center"
 BRAND_NAME = "ACE Host"
-ASSISTANT_NAME = "ACE AI"
+ASSISTANT_NAME = "Alley"
 DASHBOARD_PUBLIC_URL = "https://ace-dashboard-worker.cryptocapitalgroupfl.workers.dev"
 
 [[d1_databases]]
