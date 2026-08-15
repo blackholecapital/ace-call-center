@@ -1,5 +1,5 @@
 import { createDeepgramTranscriber } from "./stt.js";
-import { getBuddyDemoOptions, parseBuddyChoice } from "./catalog.js";
+import { getAcePreliminaryEstimate, getBuddyDemoOptions, parseBuddyChoice } from "./catalog.js";
 import { chooseDeliveryOption, describeDeliveryOptions, naturalDeliveryLabel } from "./delivery.js";
 import { openAiTwilioAudio } from "./openai-tts.js";
 
@@ -34,6 +34,9 @@ function availableProducts(options=[]){
   return options.length?options.map((option,index)=>`Option ${index+1}: ${option.name}. ${option.short}.`).join("\n"):"No fixed demo products are loaded for this inquiry.";
 }
 function requestsSalesFollowup(value=""){return /\b(sales|human|person|representative|transfer|callback|call back|appointment|schedule|proposal|quote|estimate)\b/i.test(String(value));}
+function requestsEstimateDelivery(value=""){return /\b(?:email|send|prepare|create|get|receive)\b.{0,40}\b(?:estimate|quote|proposal)\b|\b(?:estimate|quote|proposal)\b.{0,40}\b(?:email|send|prepare|create|get|receive)\b/i.test(String(value));}
+function confirmsEstimateDelivery(value=""){return /\b(?:send|email)(?: it| that| the estimate| the quote)?(?: now| please)?\b|\byou can send it\b/i.test(String(value));}
+function estimateRequirements(state,current=""){const turns=(state.conversationHistory||[]).filter(turn=>turn.role==="user").map(turn=>String(turn.content||"").trim()).filter(Boolean);if(current)turns.push(String(current).trim());return [...new Set(turns)].join(" ");}
 async function runtimeSalesReply(env,state,transcript,options=[]){
   const prompt=`SYSTEM: You are Alley, a warm, highly natural sales consultant for ACE Host speaking on a live phone call. Sound like a capable human account executive, never like a phone menu.
 
@@ -87,6 +90,7 @@ async function conciergeRequest(env,path,payload){
   const t=await r.text();let d={};try{d=t?JSON.parse(t):{};}catch{d={raw:t};}if(!r.ok||d?.ok===false){console.error("Concierge handoff rejected",{path,status:r.status,body:d,via:env.CONCIERGE?"service-binding":"public-fetch"});throw new Error(d?.error||`Concierge request failed (${r.status})`);}return d;
 }
 const notifyProductSelection=(env,p)=>conciergeRequest(env,"/internal/product-selected",p);
+const sendPreliminaryEstimate=(env,p)=>conciergeRequest(env,"/internal/preliminary-estimate",p);
 const getDeliveryOptions=(env,id)=>conciergeRequest(env,"/internal/delivery-options",{contactId:id});
 const scheduleDelivery=(env,id,o)=>conciergeRequest(env,"/internal/delivery-schedule",{contactId:id,startIso:o.startIso,endIso:o.endIso,timeZone:o.timeZone});
 async function getContactStatus(env,id){if(!id)return null;try{return await conciergeRequest(env,"/internal/contact-status",{contactId:id});}catch(e){console.error("Buddy contact status lookup failed",{contactId:id,error:e?.message||String(e)});return null;}}
@@ -101,7 +105,7 @@ export function handleTwilioMediaSocket(request,env,ctx){
     mediaChunks:0,mediaBytes:0,lastTimestamp:"",lastSequenceNumber:"",transcriptCount:0,stt:null,utteranceParts:[],turnGeneration:0,responseCount:0,
     selectedProduct:null,documentStatus:"Not sent",signatureAcknowledged:false,deliveryOptions:[],awaitingDeliveryChoice:false,deliveryScheduled:false,
     optionsOffered:false,awaitingProductChoice:false,lastUtterance:"",lastUtteranceAt:0,lastClarifyAt:0,lastPendingDocPromptAt:0,
-    conversationHistory:[],discoveryTurns:0,openingSent:false,openingStartedAt:0,openingPlaybackComplete:false,openingMarkName:"",openingResponseHandled:false,
+    conversationHistory:[],discoveryTurns:0,openingSent:false,openingStartedAt:0,openingPlaybackComplete:false,openingMarkName:"",openingResponseHandled:false,quoteRequested:false,quoteSent:false,estimateNumber:"",
   };
   const pushEvent=(e)=>{const p=emitEvent(env,{tenantId:state.tenantId,corporateId:state.corporateId,locationId:state.locationId,...e});if(ctx?.waitUntil)ctx.waitUntil(p);else p.catch(()=>{});};
   const sendTwilioClear=()=>{if(state.streamSid)try{server.send(JSON.stringify({event:"clear",streamSid:state.streamSid}));}catch{}};
@@ -138,6 +142,34 @@ export function handleTwilioMediaSocket(request,env,ctx){
       try{
         pushEvent({type:"buddy.turn.started",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,transcript:clean});
         const options=getBuddyDemoOptions(state.interest);
+        const estimateIntent=requestsEstimateDelivery(clean)||(state.quoteRequested&&confirmsEstimateDelivery(clean));
+        if(estimateIntent){
+          state.quoteRequested=true;
+          const requirements=estimateRequirements(state,clean);
+          const quote=getAcePreliminaryEstimate({interest:state.interest,location:state.location,conversation:requirements});
+          if(state.quoteSent){
+            await speak(`Your ACE Host estimate ${state.estimateNumber||""} has already been emailed to ${state.email||"the address on your request"}.`,generation,"buddy.estimate.already-sent");
+            return;
+          }
+          if(!quote){
+            await speak("I have your requirements, but I do not have an approved price for that configuration yet. I’ll flag it for an ACE Host specialist to prepare.",generation,"buddy.estimate.needs-review");
+            pushEvent({type:"buddy.estimate.needs-review",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,requirements});
+            return;
+          }
+          try{
+            const result=await sendPreliminaryEstimate(env,{contactId:state.contactId,firstName:state.firstName,lastName:state.lastName,phone:state.phone,email:state.email,interest:state.interest,location:state.location,comments:state.comments,leadScore:state.leadScore,preferredContactTime:state.preferredContactTime,quote,requirements});
+            state.quoteSent=result?.email?.ok===true;
+            state.estimateNumber=String(result?.quote?.estimateNumber||"");
+            if(!state.quoteSent)throw new Error(result?.email?.error||"Resend did not confirm estimate delivery");
+            state.conversationHistory.push({role:"user",content:clean},{role:"assistant",content:`Estimate ${state.estimateNumber} emailed successfully.`});
+            await speak(`Done—I emailed ACE Host estimate ${state.estimateNumber}. It includes the RDU quarter rack configuration at ${new Intl.NumberFormat("en-US",{style:"currency",currency:quote.currency||"USD",maximumFractionDigits:0}).format(quote.monthlyTotal)} per month.`,generation,"buddy.estimate.sent");
+          }catch(error){
+            console.error("ACE estimate delivery failed",{callSid:state.callSid,contactId:state.contactId,error:error?.message||String(error)});
+            pushEvent({type:"buddy.estimate.failed",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,error:error?.message||String(error)});
+            await speak("I couldn’t confirm the estimate email just now. I saved the request for the ACE Host team instead of telling you it was sent.",generation,"buddy.estimate.failed");
+          }
+          return;
+        }
 
         if(!state.selectedProduct && options.length){
           const choiceIndex=parseBuddyChoice(clean);
