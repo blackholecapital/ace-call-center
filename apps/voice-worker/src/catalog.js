@@ -63,7 +63,7 @@ export function getAcePreliminaryEstimate({ interest = "", location = "", conver
   const text = `${interest} ${location} ${conversation}`.toLowerCase();
   const rdu = /\b(rdu|raleigh|durham|north carolina)\b/.test(text);
   const quarterRackFit = /\b(quarter rack|1\/4 rack|three 4u|3 4u|three four u|three four-u)\b/.test(text);
-  if (rdu && quarterRackFit) return structuredClone(ACE_PRELIMINARY_ESTIMATES["rdu-quarter-rack"]);
+  if (rdu && quarterRackFit) return JSON.parse(JSON.stringify(ACE_PRELIMINARY_ESTIMATES["rdu-quarter-rack"]));
   return null;
 }
 
