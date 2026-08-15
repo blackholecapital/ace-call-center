@@ -57,8 +57,8 @@ export default {
     if (messageType === "ace-preliminary-estimate") {
       const quote = payload.quote || {};
       const currency = quote.currency || "USD";
-      const created = new Date();
-      const validUntil = new Date(created.getTime() + Math.max(1, Number(quote.validityDays || 30)) * 86400000);
+      const created = new Date(quote.createdAt || Date.now());
+      const validUntil = quote.validUntil ? new Date(quote.validUntil) : new Date(created.getTime() + Math.max(1, Number(quote.validityDays || 30)) * 86400000);
       const lines = Array.isArray(quote.lineItems) ? quote.lineItems : [];
       const requirements = Array.isArray(payload.requirements) ? payload.requirements.join(" ") : String(payload.requirements || "");
       const estimateNumber = String(quote.estimateNumber || `ACE-${String(contactId || Date.now()).replace(/[^A-Za-z0-9]/g,"").slice(-10).toUpperCase()}`);
