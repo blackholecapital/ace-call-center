@@ -10,6 +10,8 @@ function base64ByteLength(value="") { const s=String(value); if(!s)return 0; con
 function bytesToBase64(bytes){const v=bytes instanceof Uint8Array?bytes:new Uint8Array(bytes);let s="";for(let i=0;i<v.length;i+=0x8000)s+=String.fromCharCode(...v.subarray(i,i+0x8000));return btoa(s);}
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
 function normalizeUtterance(value=""){return String(value).toLowerCase().replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim();}
+function naturalFirstName(value=""){const name=String(value||"").trim();return name?name.charAt(0).toUpperCase()+name.slice(1).toLowerCase():"";}
+function greetingOnly(value=""){return /^(?:hello|hello there|hi|hi there|hey|hey there|good morning|good afternoon|good evening)$/.test(normalizeUtterance(value));}
 function mentionsSigned(value=""){return /\b(signed|finished|done|submitted|sent it|completed)\b/i.test(String(value));}
 function cleanRuntimeToken(value=""){return String(value||"").replace(/[^A-Za-z0-9_-]/g,"");}
 function tenantContext(env,event={}){const payload=event.payload||{},contact=payload.contact||event.contact||{};return{tenantId:String(event.tenantId||payload.tenantId||env.TENANT_ID||"blackhole"),corporateId:String(event.corporateId||payload.corporateId||env.CORPORATE_ID||env.TENANT_ID||"blackhole"),locationId:String(event.locationId||payload.locationId||contact.locationId||contact.location_id||env.DEFAULT_LOCATION_ID||"corporate")};}
@@ -44,13 +46,15 @@ Selected product: ${state.selectedProduct?.name||"none"}
 CURRENT DEMO PRODUCTS:
 ${availableProducts(options)}
 
+CALL STAGE: ${state.openingResponseHandled?"Consultative sales discovery.":"The prospect is responding to Alley’s opening for the first time."}
+
 RECENT CONVERSATION:
 ${recentConversation(state)||"Alley has just opened the call."}
 
 PROSPECT JUST SAID:
 ${String(transcript||"")}
 
-Acknowledge what the prospect said, then ask at most one useful discovery question. Learn their rack or capacity requirement, power density, bandwidth, redundancy, workload, timeline, facility preference, and budget range when appropriate. After enough detail, naturally recommend the closest demo product and briefly explain the alternative. Never invent pricing, inventory, specifications, guarantees, or contract terms. For custom pricing, multiple racks, urgent deployment, or complex engineering, offer to send the exact requirements to the ACE Host sales team for a tailored estimate and follow-up. Do not claim anything was sent or scheduled unless confirmed. Keep the reply to one to three natural sentences, usually under 70 words. Do not reintroduce yourself. Return only the exact words Alley should say.`;
+Never greet the prospect again, never thank them for connecting, and never reintroduce Alley or ACE Host—the opening has already done that. If this is the first response to the opening, acknowledge it briefly and transition with one broad, comfortable question about what they are trying to accomplish. Otherwise, acknowledge what they said and ask at most one useful discovery question. Learn their rack or capacity requirement, power density, bandwidth, redundancy, workload, timeline, facility preference, and budget range naturally over several turns. Do not mention numbered options or push a product until the requirements are reasonably understood or the prospect explicitly asks for choices. Then recommend the closest fit conversationally and explain why. Never invent pricing, inventory, specifications, guarantees, or contract terms. For custom pricing, multiple racks, urgent deployment, or complex engineering, offer to send the exact requirements to the ACE Host sales team for a tailored estimate and follow-up. Do not claim anything was sent or scheduled unless confirmed. Keep the reply to one or two short natural sentences, usually under 45 words. Return only the exact words Alley should say.`;
   const chat=await runtimeJson(env,"/chat",{text:prompt,firstName:state.firstName,interest:state.interest,location:state.location});
   const reply=String(chat.response||"").trim();
   if(!reply)throw new Error("Buddy runtime returned an empty sales response");
@@ -94,14 +98,14 @@ export function handleTwilioMediaSocket(request,env,ctx){
     mediaChunks:0,mediaBytes:0,lastTimestamp:"",lastSequenceNumber:"",transcriptCount:0,stt:null,utteranceParts:[],turnGeneration:0,responseCount:0,
     selectedProduct:null,documentStatus:"Not sent",signatureAcknowledged:false,deliveryOptions:[],awaitingDeliveryChoice:false,deliveryScheduled:false,
     optionsOffered:false,awaitingProductChoice:false,lastUtterance:"",lastUtteranceAt:0,lastClarifyAt:0,lastPendingDocPromptAt:0,
-    conversationHistory:[],discoveryTurns:0,openingSent:false,
+    conversationHistory:[],discoveryTurns:0,openingSent:false,openingStartedAt:0,openingPlaybackComplete:false,openingMarkName:"",openingResponseHandled:false,
   };
   const pushEvent=(e)=>{const p=emitEvent(env,{tenantId:state.tenantId,corporateId:state.corporateId,locationId:state.locationId,...e});if(ctx?.waitUntil)ctx.waitUntil(p);else p.catch(()=>{});};
   const sendTwilioClear=()=>{if(state.streamSid)try{server.send(JSON.stringify({event:"clear",streamSid:state.streamSid}));}catch{}};
   function sendTwilioAudio(audioBytes,markName){if(!state.streamSid||!audioBytes?.length)return;server.send(JSON.stringify({event:"media",streamSid:state.streamSid,media:{payload:bytesToBase64(audioBytes)}}));server.send(JSON.stringify({event:"mark",streamSid:state.streamSid,mark:{name:markName}}));}
   async function speak(text,generation,eventType="buddy.turn.completed"){
     const audio=await runtimeTwilioAudio(env,text); if(generation!==state.turnGeneration)return;
-    state.responseCount+=1; sendTwilioAudio(audio,`buddy-${state.responseCount}-${Date.now()}`);
+    state.responseCount+=1; const markName=`buddy-${state.responseCount}-${Date.now()}`; if(eventType==="buddy.sales.opening")state.openingMarkName=markName; sendTwilioAudio(audio,markName);
     console.log("Alley voice response sent",{callSid:state.callSid,contactId:state.contactId,responseText:text,audioBytes:audio.length,eventType});
     pushEvent({type:eventType,callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,response:text,audioBytes:audio.length});
   }
@@ -113,10 +117,9 @@ export function handleTwilioMediaSocket(request,env,ctx){
     return `${hello} I have two choices for ${state.interest||"your request"}: option one, ${one}, or option two, ${two}. Which one works for you?`;
   }
   function openingText(){
-    const assistant=String(env.ASSISTANT_NAME||"Alley");
-    const hello=state.firstName?`Hi ${state.firstName}, this is ${assistant} from ${brand}.`:`Hi, this is ${assistant} from ${brand}.`;
-    const interest=state.interest&&state.interest!=="your recent inquiry"?` I see you asked us about ${state.interest}.`:"";
-    return `${hello} I hope your day's going well.${interest} We have facilities in Tampa and Raleigh. Tell me a little about what you're looking to host and what your space, power, connectivity, and timing requirements look like, and I'll help narrow down the best fit.`;
+    const assistant=String(env.ASSISTANT_NAME||"Alley"),firstName=naturalFirstName(state.firstName);
+    const hello=firstName?`Hi ${firstName}, this is ${assistant} from ${brand}.`:`Hi, this is ${assistant} from ${brand}.`;
+    return `${hello} Thanks for reaching out to us. We help businesses with secure data-center infrastructure, hosting, connectivity, and AI automation from our Tampa and Raleigh facilities. I wanted to personally welcome you—how are you doing today?`;
   }
   function duplicateUtterance(clean){
     const n=normalizeUtterance(clean),now=Date.now(); if(!n)return true;
@@ -125,6 +128,7 @@ export function handleTwilioMediaSocket(request,env,ctx){
 
   function processUtterance(transcript){
     const clean=String(transcript||"").trim(); if(!clean||!state.streamSid||duplicateUtterance(clean))return;
+    if(state.openingSent&&!state.openingPlaybackComplete&&greetingOnly(clean)&&Date.now()-state.openingStartedAt<20000){console.log("Suppressed greeting captured during Alley opening",{callSid:state.callSid,contactId:state.contactId,transcript:clean});pushEvent({type:"buddy.sales.opening-overlap-suppressed",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,transcript:clean});return;}
     const generation=++state.turnGeneration; const startedAt=Date.now();
     const work=(async()=>{
       try{
@@ -152,7 +156,7 @@ export function handleTwilioMediaSocket(request,env,ctx){
           state.discoveryTurns+=1;
           const responseText=await runtimeSalesReply(env,state,clean,options);
           if(generation!==state.turnGeneration)return;
-          state.conversationHistory.push({role:"user",content:clean},{role:"assistant",content:responseText});
+          state.conversationHistory.push({role:"user",content:clean},{role:"assistant",content:responseText}); state.openingResponseHandled=true;
           state.optionsOffered=state.optionsOffered||/\boption (?:one|two|1|2)\b/i.test(responseText);
           state.awaitingProductChoice=state.optionsOffered;
           const followup=requestsSalesFollowup(clean);
@@ -173,7 +177,7 @@ export function handleTwilioMediaSocket(request,env,ctx){
             state.discoveryTurns+=1;
             const responseText=await runtimeSalesReply(env,state,clean,options);
             if(generation!==state.turnGeneration)return;
-            state.conversationHistory.push({role:"user",content:clean},{role:"assistant",content:responseText});
+            state.conversationHistory.push({role:"user",content:clean},{role:"assistant",content:responseText}); state.openingResponseHandled=true;
             const followup=requestsSalesFollowup(clean);
             pushEvent({type:followup?"buddy.sales.followup-requested":"buddy.sales.discovery",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,transcript:clean,response:responseText,selectedProduct:state.selectedProduct?.name||"",discoveryTurns:state.discoveryTurns,followupRequested:followup});
             await speak(responseText,generation,followup?"buddy.sales.followup-acknowledged":"buddy.sales.discovery-response");
@@ -228,12 +232,12 @@ export function handleTwilioMediaSocket(request,env,ctx){
     if(type==="start"){
       const start=message.start||{},params=start.customParameters||{};state.streamSid=String(start.streamSid||message.streamSid||"");state.callSid=String(start.callSid||"");state.accountSid=String(start.accountSid||"");state.contactId=String(params.contactId||"");state.firstName=String(params.firstName||"");state.lastName=String(params.lastName||"");state.phone=String(params.phone||"");state.email=String(params.email||"");state.interest=String(params.interest||"");state.location=String(params.location||"");state.comments=String(params.comments||"");state.leadScore=String(params.leadScore||"");state.preferredContactTime=String(params.preferredContactTime||"");state.tenantId=String(params.tenantId||state.tenantId);state.corporateId=String(params.corporateId||state.corporateId);state.locationId=String(params.locationId||state.locationId);const f=start.mediaFormat||{};
       console.log("Twilio media stream started",{streamSid:state.streamSid,callSid:state.callSid,contactId:state.contactId,encoding:f.encoding||"",sampleRate:f.sampleRate||"",channels:f.channels||"",sttConfigured:Boolean(env.DEEPGRAM_API_KEY),buddyRuntimeConfigured:Boolean(env.BUDDY_RUNTIME_URL&&env.BUDDY_RUNTIME_TOKEN),premiumTtsConfigured:Boolean(env.OPENAI_API_KEY),demoChoices:getBuddyDemoOptions(state.interest).length});pushEvent({type:"stream.media.started",streamSid:state.streamSid,callSid:state.callSid,contactId:state.contactId,firstName:state.firstName,interest:state.interest,location:state.location,leadScore:state.leadScore,encoding:String(f.encoding||""),sampleRate:Number(f.sampleRate||0),channels:Number(f.channels||0)});startTranscription();
-      if(!state.openingSent){state.openingSent=true;const generation=++state.turnGeneration;const opening=openingText();state.conversationHistory.push({role:"assistant",content:opening});const greeting=speak(opening,generation,"buddy.sales.opening");if(ctx?.waitUntil)ctx.waitUntil(greeting);else greeting.catch(error=>console.error("Alley opening failed",error));}
+      if(!state.openingSent){state.openingSent=true;state.openingStartedAt=Date.now();const generation=++state.turnGeneration;const opening=openingText();state.conversationHistory.push({role:"assistant",content:opening});const greeting=speak(opening,generation,"buddy.sales.opening");if(ctx?.waitUntil)ctx.waitUntil(greeting);else greeting.catch(error=>console.error("Alley opening failed",error));}
       return;
     }
     if(type==="media"){const media=message.media||{},payload=String(media.payload||"");state.mediaChunks+=1;state.mediaBytes+=base64ByteLength(payload);state.lastTimestamp=String(media.timestamp||state.lastTimestamp||"");if(payload&&state.stt)state.stt.sendBase64(payload);if(state.mediaChunks%250===0)console.log("Twilio media heartbeat",{streamSid:state.streamSid,callSid:state.callSid,contactId:state.contactId,mediaChunks:state.mediaChunks,mediaBytes:state.mediaBytes,timestamp:state.lastTimestamp,transcriptCount:state.transcriptCount,responseCount:state.responseCount});return;}
     if(type==="dtmf"){pushEvent({type:"stream.media.dtmf",streamSid:state.streamSid,callSid:state.callSid,contactId:state.contactId,digit:String(message.dtmf?.digit||"")});return;}
-    if(type==="mark"){pushEvent({type:"buddy.audio.mark",streamSid:state.streamSid,callSid:state.callSid,contactId:state.contactId,name:String(message.mark?.name||"")});return;}
+    if(type==="mark"){const markName=String(message.mark?.name||"");if(markName&&markName===state.openingMarkName)state.openingPlaybackComplete=true;pushEvent({type:"buddy.audio.mark",streamSid:state.streamSid,callSid:state.callSid,contactId:state.contactId,name:markName});return;}
     if(type==="stop"){const stop=message.stop||{};state.streamSid=state.streamSid||String(message.streamSid||"");state.callSid=state.callSid||String(stop.callSid||"");const durationMs=Date.now()-state.connectedAt;stopTranscription();console.log("Twilio media stream stopped",{streamSid:state.streamSid,callSid:state.callSid,contactId:state.contactId,mediaChunks:state.mediaChunks,mediaBytes:state.mediaBytes,transcriptCount:state.transcriptCount,responseCount:state.responseCount,selectedProduct:state.selectedProduct?.name||"",documentStatus:state.documentStatus,deliveryScheduled:state.deliveryScheduled,durationMs});pushEvent({type:"stream.media.stopped",streamSid:state.streamSid,callSid:state.callSid,contactId:state.contactId,mediaChunks:state.mediaChunks,mediaBytes:state.mediaBytes,transcriptCount:state.transcriptCount,responseCount:state.responseCount,selectedProduct:state.selectedProduct?.name||"",documentStatus:state.documentStatus,deliveryScheduled:state.deliveryScheduled,durationMs});return;}
   });
   server.addEventListener("close",(event)=>{state.turnGeneration+=1;stopTranscription();const durationMs=Date.now()-state.connectedAt;console.log("Twilio media websocket closed",{code:event.code,reason:event.reason,streamSid:state.streamSid,callSid:state.callSid,contactId:state.contactId,mediaChunks:state.mediaChunks,mediaBytes:state.mediaBytes,transcriptCount:state.transcriptCount,responseCount:state.responseCount,selectedProduct:state.selectedProduct?.name||"",documentStatus:state.documentStatus,deliveryScheduled:state.deliveryScheduled,durationMs});pushEvent({type:"stream.websocket.closed",streamSid:state.streamSid,callSid:state.callSid,contactId:state.contactId,closeCode:String(event.code||""),mediaChunks:state.mediaChunks,mediaBytes:state.mediaBytes,transcriptCount:state.transcriptCount,responseCount:state.responseCount,selectedProduct:state.selectedProduct?.name||"",documentStatus:state.documentStatus,deliveryScheduled:state.deliveryScheduled,durationMs});});
