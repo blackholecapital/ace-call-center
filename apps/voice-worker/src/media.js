@@ -1,6 +1,7 @@
 import { createDeepgramTranscriber } from "./stt.js";
 import { getAcePreliminaryEstimate, getBuddyDemoOptions, parseBuddyChoice } from "./catalog.js";
 import { chooseDeliveryOption, describeDeliveryOptions, naturalDeliveryLabel } from "./delivery.js";
+import { eilaRuntimeEnabled, streamEilaSpeech, streamEilaTurn } from "./eila-runtime.js";
 import { openAiTwilioAudio } from "./openai-tts.js";
 
 function json(data, status = 200) {
@@ -37,8 +38,8 @@ function requestsSalesFollowup(value=""){return /\b(sales|human|person|represent
 function requestsEstimateDelivery(value=""){return /\b(?:email|send|prepare|create|get|receive)\b.{0,40}\b(?:estimate|quote|proposal)\b|\b(?:estimate|quote|proposal)\b.{0,40}\b(?:email|send|prepare|create|get|receive)\b/i.test(String(value));}
 function confirmsEstimateDelivery(value=""){return /\b(?:send|email)(?: it| that| the estimate| the quote)?(?: now| please)?\b|\byou can send it\b/i.test(String(value));}
 function estimateRequirements(state,current=""){const turns=(state.conversationHistory||[]).filter(turn=>turn.role==="user").map(turn=>String(turn.content||"").trim()).filter(Boolean);if(current)turns.push(String(current).trim());return [...new Set(turns)].join(" ");}
-async function runtimeSalesReply(env,state,transcript,options=[]){
-  const prompt=`SYSTEM: You are Alley, a warm, highly natural sales consultant for ACE Host speaking on a live phone call. Sound like a capable human account executive, never like a phone menu.
+function runtimeSalesPrompt(state,transcript,options=[]){
+  return `SYSTEM: You are Alley, a warm, highly natural sales consultant for ACE Host speaking on a live phone call. Sound like a capable human account executive, never like a phone menu.
 
 ACE Host operates facilities in Tampa, Florida and Raleigh, North Carolina.
 Lead first name: ${state.firstName||"unknown"}
@@ -58,6 +59,9 @@ PROSPECT JUST SAID:
 ${String(transcript||"")}
 
 Never greet the prospect again, never thank them for connecting, and never reintroduce Alley or ACE Host—the opening has already done that. If this is the first response to the opening, acknowledge it briefly and transition with one broad, comfortable question about what they are trying to accomplish. Otherwise, acknowledge what they said and ask at most one useful discovery question. Learn their rack or capacity requirement, power density, bandwidth, redundancy, workload, timeline, facility preference, and budget range naturally over several turns. Do not mention numbered options or push a product until the requirements are reasonably understood or the prospect explicitly asks for choices. Then recommend the closest fit conversationally and explain why. Never invent pricing, inventory, specifications, guarantees, or contract terms. For custom pricing, multiple racks, urgent deployment, or complex engineering, offer to send the exact requirements to the ACE Host sales team for a tailored estimate and follow-up. Do not claim anything was sent or scheduled unless confirmed. Never repeat a question the prospect has already answered. In data-center language, “three 4U servers” means three servers that are each four rack units tall; never reinterpret it as three-to-four servers. Keep the reply to one or two concise natural sentences, normally under 32 words. Return only the exact words Alley should say.`;
+}
+async function runtimeSalesReply(env,state,transcript,options=[]){
+  const prompt=runtimeSalesPrompt(state,transcript,options);
   const runtimeStartedAt=Date.now();
   const chat=await runtimeJson(env,"/chat",{text:prompt,firstName:state.firstName,interest:state.interest,location:state.location});
   console.log("Alley runtime response generated",{callSid:state.callSid,contactId:state.contactId,latencyMs:Date.now()-runtimeStartedAt});
@@ -109,12 +113,47 @@ export function handleTwilioMediaSocket(request,env,ctx){
   };
   const pushEvent=(e)=>{const p=emitEvent(env,{tenantId:state.tenantId,corporateId:state.corporateId,locationId:state.locationId,...e});if(ctx?.waitUntil)ctx.waitUntil(p);else p.catch(()=>{});};
   const sendTwilioClear=()=>{if(state.streamSid)try{server.send(JSON.stringify({event:"clear",streamSid:state.streamSid}));}catch{}};
-  function sendTwilioAudio(audioBytes,markName){if(!state.streamSid||!audioBytes?.length)return;server.send(JSON.stringify({event:"media",streamSid:state.streamSid,media:{payload:bytesToBase64(audioBytes)}}));server.send(JSON.stringify({event:"mark",streamSid:state.streamSid,mark:{name:markName}}));}
+  function sendTwilioAudioBase64(payload){if(!state.streamSid||!payload)return;server.send(JSON.stringify({event:"media",streamSid:state.streamSid,media:{payload}}));}
+  function sendTwilioMark(markName){if(!state.streamSid||!markName)return;server.send(JSON.stringify({event:"mark",streamSid:state.streamSid,mark:{name:markName}}));}
+  function sendTwilioAudio(audioBytes,markName){if(!state.streamSid||!audioBytes?.length)return;sendTwilioAudioBase64(bytesToBase64(audioBytes));sendTwilioMark(markName);}
   async function speak(text,generation,eventType="buddy.turn.completed"){
+    if(eilaRuntimeEnabled(env)){
+      try{
+        const streamed=await streamEilaSpeech(env,text,{onAudio:(payload)=>{if(generation!==state.turnGeneration)return false;sendTwilioAudioBase64(payload);return true;}});
+        if(streamed.cancelled||generation!==state.turnGeneration)return;
+        state.responseCount+=1;const markName=`eila-${state.responseCount}-${Date.now()}`;if(eventType==="buddy.sales.opening")state.openingMarkName=markName;sendTwilioMark(markName);
+        console.log("EILA streamed voice response sent",{callSid:state.callSid,contactId:state.contactId,responseText:text,audioBytes:streamed.audioBytes,audioChunks:streamed.audioChunks,firstAudioMs:streamed.firstAudioMs,totalLatencyMs:streamed.totalLatencyMs,eventType});
+        pushEvent({type:eventType,callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,response:text,audioBytes:streamed.audioBytes,firstAudioMs:streamed.firstAudioMs,totalLatencyMs:streamed.totalLatencyMs,runtime:"eila-voice-runtime"});
+        return;
+      }catch(error){
+        console.error("EILA speech stream failed",{callSid:state.callSid,contactId:state.contactId,error:error?.message||String(error),partialAudio:Boolean(error?.partialAudio)});
+        if(error?.partialAudio)throw error;
+      }
+    }
     const audio=await runtimeTwilioAudio(env,text); if(generation!==state.turnGeneration)return;
     state.responseCount+=1; const markName=`buddy-${state.responseCount}-${Date.now()}`; if(eventType==="buddy.sales.opening")state.openingMarkName=markName; sendTwilioAudio(audio,markName);
     console.log("Alley voice response sent",{callSid:state.callSid,contactId:state.contactId,responseText:text,audioBytes:audio.length,eventType});
     pushEvent({type:eventType,callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,response:text,audioBytes:audio.length});
+  }
+  async function speakSalesTurn(transcript,options,generation,eventType){
+    if(eilaRuntimeEnabled(env)){
+      try{
+        const streamed=await streamEilaTurn(env,{prompt:runtimeSalesPrompt(state,transcript,options),sessionId:state.callSid,tenantId:state.tenantId,assistantName:String(env.ASSISTANT_NAME||"Alley"),metadata:{contactId:state.contactId,interest:state.interest,location:state.location,locationId:state.locationId}},{onAudio:(payload)=>{if(generation!==state.turnGeneration)return false;sendTwilioAudioBase64(payload);return true;}});
+        if(streamed.cancelled||generation!==state.turnGeneration)return "";
+        if(!streamed.text)throw new Error("EILA runtime returned an empty sales response");
+        state.responseCount+=1;sendTwilioMark(`eila-${state.responseCount}-${Date.now()}`);
+        console.log("EILA streamed sales turn sent",{callSid:state.callSid,contactId:state.contactId,responseText:streamed.text,audioBytes:streamed.audioBytes,audioChunks:streamed.audioChunks,firstAudioMs:streamed.firstAudioMs,totalLatencyMs:streamed.totalLatencyMs,eventType});
+        pushEvent({type:eventType,callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,response:streamed.text,audioBytes:streamed.audioBytes,firstAudioMs:streamed.firstAudioMs,totalLatencyMs:streamed.totalLatencyMs,runtime:"eila-voice-runtime"});
+        return streamed.text;
+      }catch(error){
+        console.error("EILA sales stream failed",{callSid:state.callSid,contactId:state.contactId,error:error?.message||String(error),partialAudio:Boolean(error?.partialAudio)});
+        if(error?.partialAudio)throw error;
+      }
+    }
+    const responseText=await runtimeSalesReply(env,state,transcript,options);
+    if(generation!==state.turnGeneration)return "";
+    await speak(responseText,generation,eventType);
+    return responseText;
   }
   function offerText(options){
     const assistant=String(env.ASSISTANT_NAME||"AI Concierge"),brand=String(env.BRAND_NAME||"Black Hole Capital");
@@ -190,14 +229,14 @@ export function handleTwilioMediaSocket(request,env,ctx){
           }
 
           state.discoveryTurns+=1;
-          const responseText=await runtimeSalesReply(env,state,clean,options);
+          const followup=requestsSalesFollowup(clean);
+          const responseText=await speakSalesTurn(clean,options,generation,followup?"buddy.sales.followup-acknowledged":"buddy.sales.discovery-response");
           if(generation!==state.turnGeneration)return;
+          if(!responseText)return;
           state.conversationHistory.push({role:"user",content:clean},{role:"assistant",content:responseText}); state.openingResponseHandled=true;
           state.optionsOffered=state.optionsOffered||/\boption (?:one|two|1|2)\b/i.test(responseText);
           state.awaitingProductChoice=state.optionsOffered;
-          const followup=requestsSalesFollowup(clean);
           pushEvent({type:followup?"buddy.sales.followup-requested":"buddy.sales.discovery",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,transcript:clean,response:responseText,interest:state.interest,discoveryTurns:state.discoveryTurns,followupRequested:followup});
-          await speak(responseText,generation,followup?"buddy.sales.followup-acknowledged":"buddy.sales.discovery-response");
           return;
         }
 
@@ -211,12 +250,12 @@ export function handleTwilioMediaSocket(request,env,ctx){
               return;
             }
             state.discoveryTurns+=1;
-            const responseText=await runtimeSalesReply(env,state,clean,options);
-            if(generation!==state.turnGeneration)return;
-            state.conversationHistory.push({role:"user",content:clean},{role:"assistant",content:responseText}); state.openingResponseHandled=true;
             const followup=requestsSalesFollowup(clean);
+            const responseText=await speakSalesTurn(clean,options,generation,followup?"buddy.sales.followup-acknowledged":"buddy.sales.discovery-response");
+            if(generation!==state.turnGeneration)return;
+            if(!responseText)return;
+            state.conversationHistory.push({role:"user",content:clean},{role:"assistant",content:responseText}); state.openingResponseHandled=true;
             pushEvent({type:followup?"buddy.sales.followup-requested":"buddy.sales.discovery",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,transcript:clean,response:responseText,selectedProduct:state.selectedProduct?.name||"",discoveryTurns:state.discoveryTurns,followupRequested:followup});
-            await speak(responseText,generation,followup?"buddy.sales.followup-acknowledged":"buddy.sales.discovery-response");
             return;
           }
 
@@ -238,11 +277,12 @@ export function handleTwilioMediaSocket(request,env,ctx){
           }
         }
 
-        const responseText=await runtimeSalesReply(env,state,clean,options);
-        if(generation!==state.turnGeneration)return;
-        state.conversationHistory.push({role:"user",content:clean},{role:"assistant",content:responseText});
         const followup=requestsSalesFollowup(clean);
-        const audio=await runtimeTwilioAudio(env,responseText);if(generation!==state.turnGeneration)return;state.responseCount+=1;sendTwilioAudio(audio,`buddy-${state.responseCount}-${Date.now()}`);console.log("Alley response sent",{callSid:state.callSid,contactId:state.contactId,responseText,audioBytes:audio.length,latencyMs:Date.now()-startedAt});pushEvent({type:followup?"buddy.sales.followup-requested":"buddy.turn.completed",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,transcript:clean,response:responseText,audioBytes:audio.length,latencyMs:Date.now()-startedAt,followupRequested:followup});
+        const responseText=await speakSalesTurn(clean,options,generation,followup?"buddy.sales.followup-acknowledged":"buddy.voice.response");
+        if(generation!==state.turnGeneration)return;
+        if(!responseText)return;
+        state.conversationHistory.push({role:"user",content:clean},{role:"assistant",content:responseText});
+        pushEvent({type:followup?"buddy.sales.followup-requested":"buddy.turn.completed",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,transcript:clean,response:responseText,latencyMs:Date.now()-startedAt,followupRequested:followup});
       }catch(error){console.error("Buddy turn failed",{callSid:state.callSid,contactId:state.contactId,error:error?.message||String(error)});pushEvent({type:"buddy.turn.failed",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,error:error?.message||String(error)});}
     })(); if(ctx?.waitUntil)ctx.waitUntil(work);else work.catch(()=>{});
   }

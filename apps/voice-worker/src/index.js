@@ -1,4 +1,5 @@
 import { handleTwilioMediaSocket } from "./media.js";
+import { eilaRuntimeEnabled } from "./eila-runtime.js";
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data, null, 2), {
@@ -169,7 +170,7 @@ export default {
     if (url.pathname === "/twilio/media") return handleTwilioMediaSocket(request, env, ctx);
 
     if (url.pathname === "/" || url.pathname === "/health") {
-      return json({ ok:true, service:env.TENANT_ID === "ace-host" ? "ace-voice-worker" : "blackhole-voice-worker", status:"online", tenant:tenantContext(env), voice:"twilio", realtime:String(env.MEDIA_STREAM_URL || "").startsWith("wss://") ? "configured" : "fallback", mediaBridge:"ready", conciergeBinding:Boolean(env.CONCIERGE) });
+      return json({ ok:true, service:env.TENANT_ID === "ace-host" ? "ace-voice-worker" : "blackhole-voice-worker", status:"online", tenant:tenantContext(env), voice:"twilio", realtime:String(env.MEDIA_STREAM_URL || "").startsWith("wss://") ? "configured" : "fallback", mediaBridge:"ready", voiceRuntime:eilaRuntimeEnabled(env)?"eila-streaming":"legacy-fallback", eilaRuntimeUrlConfigured:Boolean(env.EILA_RUNTIME_URL||env.BUDDY_RUNTIME_URL), conciergeBinding:Boolean(env.CONCIERGE) });
     }
 
     if (url.pathname === "/twilio/sms" && request.method === "POST") {
