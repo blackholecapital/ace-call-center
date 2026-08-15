@@ -54,8 +54,10 @@ ${recentConversation(state)||"Alley has just opened the call."}
 PROSPECT JUST SAID:
 ${String(transcript||"")}
 
-Never greet the prospect again, never thank them for connecting, and never reintroduce Alley or ACE Host—the opening has already done that. If this is the first response to the opening, acknowledge it briefly and transition with one broad, comfortable question about what they are trying to accomplish. Otherwise, acknowledge what they said and ask at most one useful discovery question. Learn their rack or capacity requirement, power density, bandwidth, redundancy, workload, timeline, facility preference, and budget range naturally over several turns. Do not mention numbered options or push a product until the requirements are reasonably understood or the prospect explicitly asks for choices. Then recommend the closest fit conversationally and explain why. Never invent pricing, inventory, specifications, guarantees, or contract terms. For custom pricing, multiple racks, urgent deployment, or complex engineering, offer to send the exact requirements to the ACE Host sales team for a tailored estimate and follow-up. Do not claim anything was sent or scheduled unless confirmed. Keep the reply to one or two short natural sentences, usually under 45 words. Return only the exact words Alley should say.`;
+Never greet the prospect again, never thank them for connecting, and never reintroduce Alley or ACE Host—the opening has already done that. If this is the first response to the opening, acknowledge it briefly and transition with one broad, comfortable question about what they are trying to accomplish. Otherwise, acknowledge what they said and ask at most one useful discovery question. Learn their rack or capacity requirement, power density, bandwidth, redundancy, workload, timeline, facility preference, and budget range naturally over several turns. Do not mention numbered options or push a product until the requirements are reasonably understood or the prospect explicitly asks for choices. Then recommend the closest fit conversationally and explain why. Never invent pricing, inventory, specifications, guarantees, or contract terms. For custom pricing, multiple racks, urgent deployment, or complex engineering, offer to send the exact requirements to the ACE Host sales team for a tailored estimate and follow-up. Do not claim anything was sent or scheduled unless confirmed. Never repeat a question the prospect has already answered. In data-center language, “three 4U servers” means three servers that are each four rack units tall; never reinterpret it as three-to-four servers. Keep the reply to one or two concise natural sentences, normally under 32 words. Return only the exact words Alley should say.`;
+  const runtimeStartedAt=Date.now();
   const chat=await runtimeJson(env,"/chat",{text:prompt,firstName:state.firstName,interest:state.interest,location:state.location});
+  console.log("Alley runtime response generated",{callSid:state.callSid,contactId:state.contactId,latencyMs:Date.now()-runtimeStartedAt});
   const reply=String(chat.response||"").trim();
   if(!reply)throw new Error("Buddy runtime returned an empty sales response");
   return reply;
@@ -64,8 +66,9 @@ Never greet the prospect again, never thank them for connecting, and never reint
 async function runtimeTwilioAudio(env,text){
   if(String(env.OPENAI_API_KEY||"").trim()){
     try{
+      const ttsStartedAt=Date.now();
       const premium=await openAiTwilioAudio(env,text);
-      console.log("Buddy premium TTS generated",{provider:premium.provider,model:premium.model,voice:premium.voice,audioBytes:premium.audio.length});
+      console.log("Buddy premium TTS generated",{provider:premium.provider,model:premium.model,voice:premium.voice,audioBytes:premium.audio.length,latencyMs:Date.now()-ttsStartedAt});
       return premium.audio;
     }catch(error){
       console.error("Premium OpenAI TTS failed; falling back to GPU Kokoro",error?.message||String(error));
