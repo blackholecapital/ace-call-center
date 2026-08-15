@@ -9,6 +9,9 @@ function assistantName(env) { return String(env.ASSISTANT_NAME || "AI Concierge"
 function brandColor(env) { return String(env.BRAND_PRIMARY_COLOR || "#111111"); }
 function brandUrl(env) { return String(env.BRAND_URL || "https://blackholecapital.ai"); }
 function tenantContext(env, event = {}) { const payload=event.payload||{},contact=payload.contact||event.contact||{};return{tenantId:String(event.tenantId||payload.tenantId||env.TENANT_ID||"blackhole"),corporateId:String(event.corporateId||payload.corporateId||env.CORPORATE_ID||env.TENANT_ID||"blackhole"),locationId:String(event.locationId||payload.locationId||contact.locationId||contact.location_id||env.DEFAULT_LOCATION_ID||"corporate")}; }
+function money(value=0,currency="USD"){return new Intl.NumberFormat("en-US",{style:"currency",currency}).format(Number(value||0));}
+function quoteDate(value=new Date()){return new Intl.DateTimeFormat("en-US",{year:"numeric",month:"2-digit",day:"2-digit",timeZone:"America/New_York"}).format(value);}
+function firstValue(...values){return values.find(value=>String(value||"").trim())||"";}
 
 function shell(env, title, inner) {
   const brand = brandName(env);
@@ -32,7 +35,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status:204 });
-    if (url.pathname === "/api/health") return Response.json({ ok:true, service:env.TENANT_ID === "ace-host" ? "ace-email-worker" : "blackhole-email-worker", provider:"resend", health:"online", tenant:tenantContext(env) });
+    if (url.pathname === "/api/health") return Response.json({ ok:true, service:env.TENANT_ID === "ace-host" ? "ace-email-worker" : "blackhole-email-worker", provider:"resend", health:"online", configured:Boolean(env.RESEND_API_KEY&&env.FROM_EMAIL), fromConfigured:Boolean(env.FROM_EMAIL), tenant:tenantContext(env) });
     if (url.pathname !== "/internal/send" || request.method !== "POST") return Response.json({ ok:false, error:"Route not found" }, { status:404 });
 
     const payload = await request.json();
@@ -51,7 +54,64 @@ export default {
     let subject;
     let html;
 
-    if (messageType === "buddy-docusign") {
+    if (messageType === "ace-preliminary-estimate") {
+      const quote = payload.quote || {};
+      const currency = quote.currency || "USD";
+      const created = new Date(quote.createdAt || Date.now());
+      const validUntil = quote.validUntil ? new Date(quote.validUntil) : new Date(created.getTime() + Math.max(1, Number(quote.validityDays || 30)) * 86400000);
+      const lines = Array.isArray(quote.lineItems) ? quote.lineItems : [];
+      const requirements = Array.isArray(payload.requirements) ? payload.requirements.join(" ") : String(payload.requirements || "");
+      const estimateNumber = String(quote.estimateNumber || `ACE-${String(contactId || Date.now()).replace(/[^A-Za-z0-9]/g,"").slice(-10).toUpperCase()}`);
+      const company = firstValue(contact.company, contact.companyName, contact.businessName);
+      const address1 = firstValue(contact.addressLine1, contact.address1, contact.street);
+      const address2 = firstValue(contact.addressLine2, contact.address2);
+      const city = firstValue(contact.city);
+      const region = firstValue(contact.state, contact.region);
+      const postal = firstValue(contact.postalCode, contact.zip);
+      const country = firstValue(contact.country, "United States");
+      const recipientLines = [
+        company,
+        [contact.firstName, contact.lastName].filter(Boolean).join(" "),
+        address1,
+        address2,
+        [city, region, postal].filter(Boolean).join(", ").replace(/, ([^,]+)$/, " $1"),
+        country,
+        contact.email,
+        contact.phone,
+      ].filter(Boolean).map(line=>esc(line)).join("<br>");
+      const rows = lines.map(item => `<tr>
+        <td style="padding:10px 8px;border:1px solid #d4d4d8;text-align:center;">${esc(item.quantity || 1)}</td>
+        <td style="padding:10px 8px;border:1px solid #d4d4d8;">${esc(item.description || "")}</td>
+        <td style="padding:10px 8px;border:1px solid #d4d4d8;text-align:right;">${esc(money(item.unitPrice, currency))}</td>
+        <td style="padding:10px 8px;border:1px solid #d4d4d8;text-align:right;">${esc(money(item.total, currency))}</td>
+      </tr>`).join("");
+      subject = `${brand} Estimate ${estimateNumber} — ${quote.serviceName || productName}`;
+      html = shell(env, "Complete service estimate", `
+        <table width="100%" cellpadding="8" cellspacing="0" style="margin:0 0 24px;border-collapse:collapse;">
+          <tr style="background:#f4f4f5;"><th style="border:1px solid #d4d4d8;">Estimate #</th><th style="border:1px solid #d4d4d8;">Subject</th><th style="border:1px solid #d4d4d8;">Created</th><th style="border:1px solid #d4d4d8;">Valid until</th></tr>
+          <tr><td style="border:1px solid #d4d4d8;text-align:center;">${esc(estimateNumber)}</td><td style="border:1px solid #d4d4d8;">${esc(quote.subject || quote.serviceName || productName)}</td><td style="border:1px solid #d4d4d8;text-align:center;">${esc(quoteDate(created))}</td><td style="border:1px solid #d4d4d8;text-align:center;">${esc(quoteDate(validUntil))}</td></tr>
+        </table>
+        <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;"><tr>
+          <td width="50%" valign="top"><strong>Recipient</strong><br><div style="margin-top:8px;line-height:1.5;">${recipientLines}</div></td>
+          <td width="50%" valign="top"><strong>Service location</strong><br><div style="margin-top:8px;line-height:1.5;">${esc(quote.facilityCode || "")}<br>${esc(quote.facilityName || contact.location || "")}<br>${esc(quote.serviceName || productName)}</div></td>
+        </tr></table>
+        ${requirements ? `<div style="margin:0 0 24px;padding:16px;background:#fff5f5;border-left:4px solid ${esc(accent)};"><strong>Requirements discussed</strong><div style="margin-top:8px;line-height:1.5;">${esc(requirements)}</div></div>` : ""}
+        <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+          <thead><tr style="background:#f4f4f5;"><th style="padding:10px 8px;border:1px solid #d4d4d8;">Qty</th><th style="padding:10px 8px;border:1px solid #d4d4d8;text-align:left;">Description</th><th style="padding:10px 8px;border:1px solid #d4d4d8;text-align:right;">Unit price</th><th style="padding:10px 8px;border:1px solid #d4d4d8;text-align:right;">Total</th></tr></thead>
+          <tbody>${rows}</tbody>
+          <tfoot>
+            <tr><td colspan="3" style="padding:10px 8px;border:1px solid #d4d4d8;text-align:right;font-weight:700;">Subtotal</td><td style="padding:10px 8px;border:1px solid #d4d4d8;text-align:right;font-weight:700;">${esc(money(quote.monthlyTotal, currency))}</td></tr>
+            <tr><td colspan="3" style="padding:12px 8px;border:1px solid #d4d4d8;text-align:right;font-weight:800;">Estimated monthly total</td><td style="padding:12px 8px;border:1px solid #d4d4d8;text-align:right;font-weight:800;color:${esc(accent)};">${esc(money(quote.monthlyTotal, currency))}</td></tr>
+          </tfoot>
+        </table>
+        <table width="100%" cellpadding="8" cellspacing="0" style="margin-top:22px;border-collapse:collapse;">
+          <tr><td style="border:1px solid #d4d4d8;"><strong>Contract term</strong></td><td style="border:1px solid #d4d4d8;">${esc(quote.termMonths || 12)} months</td></tr>
+          <tr><td style="border:1px solid #d4d4d8;"><strong>Promotion</strong></td><td style="border:1px solid #d4d4d8;">${esc(quote.promotion || "None")}</td></tr>
+          <tr><td style="border:1px solid #d4d4d8;"><strong>Credit-card fee</strong></td><td style="border:1px solid #d4d4d8;">${esc(quote.creditCardFeePercent || 3.5)}%</td></tr>
+        </table>
+        <p style="margin-top:22px;font-size:13px;color:#666;line-height:1.5;">This estimate is based on the information available during the call and is subject to technical review, facility availability, final configuration approval, taxes, and the final service agreement. An ACE Host specialist may revise the configuration if additional requirements are identified.</p>
+        <p style="margin-bottom:0;">Reply to this email or speak with an ACE Host specialist to approve the configuration and receive the final service agreement.</p>`);
+    } else if (messageType === "buddy-docusign") {
       subject = `Your ${brand} agreement is ready to sign`;
       html = shell(env, "Your agreement is ready", `
         <h2 style="margin-top:0;color:${esc(accent)};">Hi ${esc(contact.firstName || "there")},</h2>

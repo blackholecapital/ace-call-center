@@ -19,8 +19,8 @@ DEEPGRAM_ENDPOINTING_MS = "300"
 BUDDY_RUNTIME_URL = "https://erkn5tqy74wqqi-8000.proxy.runpod.net"
 BUDDY_OPENAI_TTS_MODEL = "gpt-4o-mini-tts"
 BUDDY_OPENAI_TTS_VOICE = "shimmer"
-BUDDY_OPENAI_TTS_SPEED = "0.92"
-BUDDY_OPENAI_TTS_INSTRUCTIONS = "Speak as Alley, a warm, confident British woman representing ACE Host. Use a consistent contemporary Southern British English accent, with natural British vowels and rhythm. Keep the voice distinctly feminine. Speak at an unhurried conversational pace with short pauses between thoughts. Sound like a relaxed consultative salesperson on a real phone call—welcoming, polished, responsive, and never like an announcer or phone menu."
+BUDDY_OPENAI_TTS_SPEED = "0.98"
+BUDDY_OPENAI_TTS_INSTRUCTIONS = "Speak as Alley, a warm, confident British woman representing ACE Host. Use a consistent contemporary Southern British English accent, with natural British vowels and rhythm. Keep the voice distinctly feminine. Speak at a natural conversational pace with brief pauses between thoughts. Sound like a relaxed consultative salesperson on a real phone call—welcoming, polished, responsive, and never like an announcer or phone menu."
 
 [observability]
 enabled = true
