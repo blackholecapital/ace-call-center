@@ -37,6 +37,36 @@ export const BUDDY_DEMO_CATALOG = {
   ],
 };
 
+export const ACE_PRELIMINARY_ESTIMATES = {
+  "rdu-quarter-rack": {
+    id: "rdu-quarter-rack",
+    subject: "RDU Data Center Colocation and Server Transfer",
+    facilityCode: "RDU",
+    facilityName: "Raleigh, North Carolina",
+    serviceName: "Quarter Rack Colocation",
+    monthlyTotal: 399,
+    currency: "USD",
+    creditCardFeePercent: 3.5,
+    termMonths: 12,
+    validityDays: 30,
+    promotion: "Setup fee waived and one month free on a 12-month term",
+    lineItems: [
+      { quantity: 1, description: "1/4 Rack 208V/30A A/B Power", unitPrice: 399, total: 399 },
+      { quantity: 1, description: "IPv4 Subnet /29 (5 Usable)", unitPrice: 0, total: 0 },
+      { quantity: 1, description: "1GB Dedicated Port / 1GB Unmetered Link", unitPrice: 0, total: 0 },
+      { quantity: 1, description: "Setup Fee Waived - 1 Month Free on 12 Month Term", unitPrice: 0, total: 0 },
+    ],
+  },
+};
+
+export function getAcePreliminaryEstimate({ interest = "", location = "", conversation = "" } = {}) {
+  const text = `${interest} ${location} ${conversation}`.toLowerCase();
+  const rdu = /\b(rdu|raleigh|durham|north carolina)\b/.test(text);
+  const quarterRackFit = /\b(quarter rack|1\/4 rack|three 4u|3 4u|three four u|three four-u)\b/.test(text);
+  if (rdu && quarterRackFit) return structuredClone(ACE_PRELIMINARY_ESTIMATES["rdu-quarter-rack"]);
+  return null;
+}
+
 export function getBuddyDemoOptions(interest = "") {
   const key = String(interest || "").trim();
   return BUDDY_DEMO_CATALOG[key] || [];
