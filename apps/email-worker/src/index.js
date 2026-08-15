@@ -32,7 +32,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status:204 });
-    if (url.pathname === "/api/health") return Response.json({ ok:true, service:env.TENANT_ID === "ace-host" ? "ace-email-worker" : "blackhole-email-worker", provider:"resend", health:"online", tenant:tenantContext(env) });
+    if (url.pathname === "/api/health") return Response.json({ ok:true, service:env.TENANT_ID === "ace-host" ? "ace-email-worker" : "blackhole-email-worker", provider:"resend", health:"online", configured:Boolean(env.RESEND_API_KEY&&env.FROM_EMAIL), fromConfigured:Boolean(env.FROM_EMAIL), tenant:tenantContext(env) });
     if (url.pathname !== "/internal/send" || request.method !== "POST") return Response.json({ ok:false, error:"Route not found" }, { status:404 });
 
     const payload = await request.json();
