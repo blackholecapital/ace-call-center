@@ -129,6 +129,7 @@ export function handleTwilioMediaSocket(request,env,ctx){
   function processUtterance(transcript){
     const clean=String(transcript||"").trim(); if(!clean||!state.streamSid||duplicateUtterance(clean))return;
     if(state.openingSent&&!state.openingPlaybackComplete&&greetingOnly(clean)&&Date.now()-state.openingStartedAt<20000){console.log("Suppressed greeting captured during Alley opening",{callSid:state.callSid,contactId:state.contactId,transcript:clean});pushEvent({type:"buddy.sales.opening-overlap-suppressed",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,transcript:clean});return;}
+    if(state.openingSent&&!state.openingPlaybackComplete){state.openingPlaybackComplete=true;sendTwilioClear();}
     const generation=++state.turnGeneration; const startedAt=Date.now();
     const work=(async()=>{
       try{
@@ -217,7 +218,7 @@ export function handleTwilioMediaSocket(request,env,ctx){
     state.stt=createDeepgramTranscriber(env,{
       onOpen:({model})=>{console.log("Deepgram STT connected",{callSid:state.callSid,contactId:state.contactId,model});pushEvent({type:"stt.connected",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,model});},
       onTranscript:({transcript,isFinal,speechFinal,confidence})=>{if(isFinal)state.transcriptCount+=1;console.log("Deepgram transcript",{callSid:state.callSid,contactId:state.contactId,transcript,isFinal,speechFinal,confidence});if(isFinal){state.utteranceParts.push(transcript);pushEvent({type:"stt.transcript.final",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,transcript,confidence,speechFinal});if(speechFinal)flushUtterance();}},
-      onSpeechStarted:()=>{state.turnGeneration+=1;sendTwilioClear();pushEvent({type:"stt.speech.started",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId});},
+      onSpeechStarted:()=>{if(state.openingPlaybackComplete){state.turnGeneration+=1;sendTwilioClear();}pushEvent({type:"stt.speech.started",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId});},
       onUtteranceEnd:()=>{flushUtterance();pushEvent({type:"stt.utterance.end",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId});},
       onClose:({code,reason})=>{console.log("Deepgram STT closed",{callSid:state.callSid,code,reason});pushEvent({type:"stt.closed",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,closeCode:String(code||"")});},
       onError:()=>{console.error("Deepgram STT websocket error",{callSid:state.callSid});pushEvent({type:"stt.error",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId});},
