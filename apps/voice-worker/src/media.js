@@ -51,7 +51,7 @@ PROSPECT JUST SAID:
 ${String(transcript||"")}
 
 Acknowledge what the prospect said, then ask at most one useful discovery question. Learn their rack or capacity requirement, power density, bandwidth, redundancy, workload, timeline, facility preference, and budget range when appropriate. After enough detail, naturally recommend the closest demo product and briefly explain the alternative. Never invent pricing, inventory, specifications, guarantees, or contract terms. For custom pricing, multiple racks, urgent deployment, or complex engineering, offer to send the exact requirements to the ACE Host sales team for a tailored estimate and follow-up. Do not claim anything was sent or scheduled unless confirmed. Keep the reply to one to three natural sentences, usually under 70 words. Do not reintroduce yourself. Return only the exact words Alley should say.`;
-  const chat=await runtimeJson(env,"/chat",{text:prompt,firstName:state.firstName,interest:state.interest,location:state.location,leadScore:state.leadScore,tenantId:state.tenantId,corporateId:state.corporateId,locationId:state.locationId});
+  const chat=await runtimeJson(env,"/chat",{text:prompt,firstName:state.firstName,interest:state.interest,location:state.location});
   const reply=String(chat.response||"").trim();
   if(!reply)throw new Error("Buddy runtime returned an empty sales response");
   return reply;
