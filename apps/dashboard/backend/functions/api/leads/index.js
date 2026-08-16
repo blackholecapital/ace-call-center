@@ -1,21 +1,7 @@
 const contacts = require("../../../layers/domain/contacts");
 const activity = require("../../../layers/domain/activity");
 const { conciergePost } = require("../../../../shared/services/concierge");
-
-function scoreLead(body = {}) {
-  let score = 0;
-  if (body.first_name || body.firstName) score += 10;
-  if (body.last_name || body.lastName) score += 10;
-  if (body.phone) score += 20;
-  if (body.email) score += 10;
-  if (body.product_interest) score += 15;
-  if (body.preferred_store) score += 10;
-  if (body.contact_method) score += 10;
-  if (body.contact_time) score += 5;
-  if (String(body.comments || "").trim()) score += 5;
-  if (body.consent === true || body.consent === "true" || body.consent === "on") score += 5;
-  return Math.min(score, 100);
-}
+const { initialLeadScore, baselineOpportunityValue } = require("../../../layers/domain/lead-intelligence");
 
 function base64Url(bytes) {
   let binary = "";
@@ -41,7 +27,15 @@ async function buildCallNowUrl(env, contactId) {
 module.exports = async function handler({ method, body, env }) {
   if (method !== "POST") return { ok:false, error:"POST only" };
 
-  const leadScore = scoreLead(body);
+  const scoreInput = {
+    firstName:body.first_name || body.firstName || "", lastName:body.last_name || body.lastName || "",
+    company:body.company || "", phone:body.phone || "", email:body.email || "",
+    interest:body.product_interest || "", location:body.preferred_store || "",
+    preferredContactMethod:body.contact_method || body.preferredContactMethod || "",
+    preferredContactTime:body.contact_time || "", comments:body.comments || "",
+    leadSource:body.lead_source || "", consent:body.consent,
+  };
+  const leadScore = initialLeadScore(scoreInput).score;
   const preferredContactMethod = body.contact_method || body.preferredContactMethod || "";
   const tenantId = body.tenantId || env.TENANT_ID || "blackhole";
   const corporateId = body.corporateId || env.CORPORATE_ID || tenantId;
@@ -62,12 +56,14 @@ module.exports = async function handler({ method, body, env }) {
     comments: body.comments || "",
     smsConsent: body.consent === true || body.consent === "true" || body.consent === "on",
     owner: body.owner || `${brandName} Web Lead`,
-    company: body.company || brandName,
+    company: body.company || "",
     source: `${brandName} web lead`,
     tenantId,
     corporateId,
     locationId,
     leadScore,
+    initialLeadScore:leadScore,
+    value:baselineOpportunityValue(scoreInput),
     stage: "New Lead",
     outreachStatus: "Pending",
     callStatus: "Not called",
