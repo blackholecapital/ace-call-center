@@ -84,10 +84,10 @@ export function getAcePreliminaryEstimate({ interest = "", location = "", conver
   const conversationText=String(conversation||"").toLowerCase();
   const facility=/\b(rdu|raleigh|durham|north carolina)\b/.test(allText)?"rdu":/\b(tpa|tampa|florida)\b/.test(allText)?"tpa":"tpa";
   let size="";
-  if(/\b(quarter rack|1\/4 rack|three 4u|3 4u|three four u|three four-u)\b/.test(conversationText))size="quarter";
+  if(/\b(quarter(?: of)? (?:a )?rack|1\/4 rack|three 4u|3 4u|three four u|three four-u)\b/.test(conversationText))size="quarter";
   else if(/\b(half rack|1\/2 rack)\b/.test(conversationText))size="half";
   else if(/\b(full rack|whole rack|full cabinet)\b/.test(conversationText))size="full";
-  else if(/\b(quarter rack|1\/4 rack)\b/.test(allText))size="quarter";
+  else if(/\b(quarter(?: of)? (?:a )?rack|1\/4 rack)\b/.test(allText))size="quarter";
   else if(/\b(half rack|1\/2 rack)\b/.test(allText))size="half";
   else if(/\b(full rack|whole rack|full cabinet)\b/.test(allText))size="full";
   if(!size)return null;

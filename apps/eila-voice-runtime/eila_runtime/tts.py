@@ -20,6 +20,7 @@ class ChatterboxSpeech:
         self.settings = settings
         self.model = None
         self._lock = asyncio.Lock()
+        self._cache: dict[str, Speech] = {}
 
     @property
     def ready(self) -> bool:
@@ -44,22 +45,33 @@ class ChatterboxSpeech:
             str(voice_reference),
             exaggeration=self.settings.tts_exaggeration,
         )
+        for text in (part.strip() for part in self.settings.tts_preface_texts.split("|")):
+            if text:
+                self._cache[text] = await asyncio.to_thread(self._generate, text)
+
+    def _generate(self, text: str) -> Speech:
+        kwargs = {
+            "exaggeration": self.settings.tts_exaggeration,
+            "cfg_weight": self.settings.tts_cfg_weight,
+        }
+        waveform = self.model.generate(text, **kwargs)
+        if hasattr(waveform, "detach"):
+            waveform = waveform.detach().cpu().numpy()
+        sample_rate = int(getattr(self.model, "sr", self.settings.tts_sample_rate))
+        return Speech(samples=np.asarray(waveform, dtype=np.float32).squeeze(), sample_rate=sample_rate)
 
     async def synthesize(self, text: str) -> Speech:
         if self.settings.tts_backend == "disabled":
             raise RuntimeError("TTS is disabled")
         await self.load()
-        kwargs = {
-            "exaggeration": self.settings.tts_exaggeration,
-            "cfg_weight": self.settings.tts_cfg_weight,
-        }
+        clean = str(text).strip()
+        cached = self._cache.get(clean)
+        if cached is not None:
+            return cached
 
         async with self._lock:
-            waveform = await asyncio.to_thread(self.model.generate, text, **kwargs)
-        if hasattr(waveform, "detach"):
-            waveform = waveform.detach().cpu().numpy()
-        sample_rate = int(getattr(self.model, "sr", self.settings.tts_sample_rate))
-        return Speech(samples=np.asarray(waveform, dtype=np.float32).squeeze(), sample_rate=sample_rate)
+            speech = await asyncio.to_thread(self._generate, clean)
+        return speech
 
     def status(self) -> dict:
         reference = Path(self.settings.voice_reference_path)

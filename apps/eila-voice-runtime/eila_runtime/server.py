@@ -33,6 +33,7 @@ class TurnRequest(BaseModel):
     tenantId: str | None = None
     assistantName: str | None = None
     metadata: dict = Field(default_factory=dict)
+    preface: str | None = Field(default=None, max_length=80)
 
 
 def authorize(token: str | None) -> None:
@@ -91,7 +92,7 @@ async def turn(req: TurnRequest, x_runtime_token: str | None = Header(default=No
     rid = request_id("turn")
 
     async def body():
-        async for item in engine.stream_turn(req.prompt, rid):
+        async for item in engine.stream_turn(req.prompt, rid, preface=req.preface or ""):
             yield ndjson(item)
 
     return StreamingResponse(body(), media_type="application/x-ndjson")
