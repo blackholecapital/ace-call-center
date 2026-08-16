@@ -39,7 +39,7 @@ export function conversationOpening(state = {}, { assistant = "Alley", brand = "
   const hello = name ? `Hi ${name}, it's ${assistant} from ${brand}.` : `Hi, it's ${assistant} from ${brand}.`;
   const subject = String(state.priorSelectedProduct || state.interest || "your infrastructure plans").trim();
   const estimate = String(state.estimateNumber || "").trim();
-  const customerInitiated = /^(?:sms-reply|email-call-link|customer-callback)$/i.test(String(state.triggerType || ""));
+  const customerInitiated = /^(?:inbound|sms-reply|email-call-link|customer-callback)$/i.test(String(state.triggerType || ""));
 
   if (state.isFollowup) {
     const returnLine = customerInitiated ? "Thanks for getting back in touch." : "I'm following up on our earlier conversation.";
@@ -49,5 +49,13 @@ export function conversationOpening(state = {}, { assistant = "Alley", brand = "
     return `${hello} ${returnLine} ${estimateLine} What would you like to pick up with today?`;
   }
 
-  return `${hello} I wanted to personally welcome you. I can answer questions, help you narrow down the right setup, or prepare a preliminary estimate when you're ready. How's your day going?`;
+  if (customerInitiated) {
+    return `${hello} Thanks for calling. I can help you think through the right setup, prepare a preliminary estimate, or arrange time with our sales team. Tell me a little about what you're working on and how we can help today.`;
+  }
+
+  const leadContext = [subject && subject !== "your infrastructure plans" ? subject : "", state.location]
+    .filter(Boolean)
+    .join(" in ");
+  const contextLine = leadContext ? `I saw your request about ${leadContext}, and I wanted to personally welcome you.` : "I wanted to personally welcome you.";
+  return `${hello} ${contextLine} I can answer questions, help you narrow down the right setup, or prepare a preliminary estimate when you're ready. How's your day going?`;
 }

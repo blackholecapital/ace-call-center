@@ -4,10 +4,18 @@ import test from "node:test";
 import { conversationOpening, meaningfulBargeIn } from "../src/conversation.js";
 
 test("new lead opening welcomes the customer without forcing a product menu", () => {
-  const opening = conversationOpening({ firstName:"mike", interest:"Rack Hosting" });
+  const opening = conversationOpening({ firstName:"mike", interest:"Rack Hosting", location:"Tampa" });
   assert.match(opening, /personally welcome you/i);
+  assert.match(opening, /Rack Hosting in Tampa/i);
   assert.match(opening, /preliminary estimate/i);
   assert.doesNotMatch(opening, /option one|option two/i);
+});
+
+test("customer-initiated opening invites needs in the customer's own words", () => {
+  const opening = conversationOpening({ firstName:"mike", triggerType:"inbound" });
+  assert.match(opening, /Thanks for calling/i);
+  assert.match(opening, /what you're working on/i);
+  assert.doesNotMatch(opening, /How's your day/i);
 });
 
 test("follow-up opening carries estimate context forward", () => {

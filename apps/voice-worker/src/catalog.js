@@ -1,39 +1,39 @@
 export const BUDDY_DEMO_CATALOG = {
   "Dedicated Servers": [
-    { id:"dedicated-managed", name:"Managed Dedicated Server", short:"managed compute, monitoring, and support" },
-    { id:"dedicated-custom", name:"Custom Dedicated Server", short:"custom compute, memory, storage, and network configuration" },
+    { id:"dedicated-managed", name:"Managed Dedicated Server", short:"managed compute, monitoring, and support", basePrice:1500 },
+    { id:"dedicated-custom", name:"Custom Dedicated Server", short:"custom compute, memory, storage, and network configuration", basePrice:1199 },
   ],
   "Colocation Hosting": [
-    { id:"colo-quarter", name:"Quarter Rack Colocation", short:"secure rack space, power, and network connectivity" },
-    { id:"colo-half", name:"Half Rack Colocation", short:"expanded rack capacity with redundant connectivity" },
+    { id:"colo-quarter", name:"Quarter Rack Colocation", short:"secure rack space, power, and network connectivity", basePrice:399 },
+    { id:"colo-half", name:"Half Rack Colocation", short:"expanded rack capacity with redundant connectivity", basePrice:799 },
   ],
   "Full Rack Colocation": [
-    { id:"rack-standard", name:"Standard Full Rack", short:"full cabinet, metered power, and network uplinks" },
-    { id:"rack-high-density", name:"High Density Full Rack", short:"higher power density and custom network design" },
+    { id:"rack-standard", name:"Standard Full Rack", short:"full cabinet, metered power, and network uplinks", basePrice:1499 },
+    { id:"rack-high-density", name:"High Density Full Rack", short:"higher power density and custom network design", basePrice:1999 },
   ],
   "Crypto Mining Facility": [
-    { id:"mining-gpu", name:"GPU Mining Hosting", short:"power, cooling, monitoring, and remote hands" },
-    { id:"mining-asic", name:"ASIC Mining Hosting", short:"high-density power and purpose-built cooling" },
+    { id:"mining-gpu", name:"GPU Mining Hosting", short:"power, cooling, monitoring, and remote hands", basePrice:5000 },
+    { id:"mining-asic", name:"ASIC Mining Hosting", short:"high-density power and purpose-built cooling", basePrice:5000 },
   ],
   "AI Call Automation": [
-    { id:"ai-call-inbound", name:"Inbound AI Call Concierge", short:"always-on call answering, qualification, and routing" },
-    { id:"ai-call-outbound", name:"Outbound AI Call Campaigns", short:"automated lead follow-up and appointment booking" },
+    { id:"ai-call-inbound", name:"Inbound AI Call Concierge", short:"always-on call answering, qualification, and routing", basePrice:3500 },
+    { id:"ai-call-outbound", name:"Outbound AI Call Campaigns", short:"automated lead follow-up and appointment booking", basePrice:3500 },
   ],
   "AI Lead Qualification": [
-    { id:"ai-lead-realtime", name:"Real-Time Lead Qualification", short:"instant scoring, enrichment, and sales handoff" },
-    { id:"ai-lead-reactivation", name:"Lead Reactivation Automation", short:"multi-channel follow-up for dormant opportunities" },
+    { id:"ai-lead-realtime", name:"Real-Time Lead Qualification", short:"instant scoring, enrichment, and sales handoff", basePrice:3500 },
+    { id:"ai-lead-reactivation", name:"Lead Reactivation Automation", short:"multi-channel follow-up for dormant opportunities", basePrice:3500 },
   ],
   "AI Support Concierge": [
-    { id:"ai-support-tier1", name:"Tier One AI Support", short:"automated intake, troubleshooting, and escalation" },
-    { id:"ai-support-noc", name:"AI NOC Concierge", short:"incident intake, status updates, and on-call routing" },
+    { id:"ai-support-tier1", name:"Tier One AI Support", short:"automated intake, troubleshooting, and escalation", basePrice:3500 },
+    { id:"ai-support-noc", name:"AI NOC Concierge", short:"incident intake, status updates, and on-call routing", basePrice:3500 },
   ],
   "AI Workflow Automation": [
-    { id:"ai-workflow-sales", name:"Sales Workflow Automation", short:"CRM updates, proposals, reminders, and reporting" },
-    { id:"ai-workflow-ops", name:"Operations Workflow Automation", short:"ticketing, provisioning, alerts, and approvals" },
+    { id:"ai-workflow-sales", name:"Sales Workflow Automation", short:"CRM updates, proposals, reminders, and reporting", basePrice:3500 },
+    { id:"ai-workflow-ops", name:"Operations Workflow Automation", short:"ticketing, provisioning, alerts, and approvals", basePrice:3500 },
   ],
   Other: [
-    { id: "other-consult", name: "Infrastructure Consultation", short: "custom hosting, networking, or data-center planning" },
-    { id: "other-support", name: "Existing Account Support", short: "service, billing, provisioning, or technical support" },
+    { id: "other-consult", name: "Infrastructure Consultation", short: "custom hosting, networking, or data-center planning", basePrice:1000 },
+    { id: "other-support", name: "Existing Account Support", short: "service, billing, provisioning, or technical support", basePrice:500 },
   ],
 };
 
@@ -47,6 +47,16 @@ const FACILITIES = {
   rdu: { facilityCode:"RDU", facilityName:"Raleigh, North Carolina" },
   tpa: { facilityCode:"TPA", facilityName:"Tampa, Florida" },
 };
+
+const BASELINE_SERVICES = [
+  { match:/\bvps\b/i, id:"vps-hosting", name:"VPS Hosting", short:"virtual private server hosting and standard connectivity", basePrice:299 },
+  { match:/\bmanaged service/i, id:"managed-services", name:"Managed Services", short:"managed infrastructure operations, monitoring, and support", basePrice:1500 },
+  { match:/\bwireless|network infrastructure/i, id:"wireless-infrastructure", name:"Wireless Infrastructure", short:"managed network infrastructure and connectivity", basePrice:2500 },
+  { match:/\btelehealth/i, id:"telehealth-infrastructure", name:"Telehealth Infrastructure", short:"secure hosted infrastructure for telehealth workloads", basePrice:3000 },
+  { match:/\bdisaster recovery|business continuity/i, id:"disaster-recovery", name:"Disaster Recovery", short:"recovery hosting, replication, and continuity planning", basePrice:1500 },
+  { match:/\bcloud hosting|private cloud/i, id:"cloud-hosting", name:"Cloud Hosting", short:"hosted cloud compute, storage, and connectivity", basePrice:750 },
+  { match:/\bconnectivity|bandwidth|internet transit/i, id:"connectivity", name:"Network Connectivity", short:"business connectivity and managed bandwidth", basePrice:750 },
+];
 
 function buildRackEstimate(size, facility) {
   const plan=RACK_PLANS[size], site=FACILITIES[facility];
@@ -79,10 +89,34 @@ export const ACE_PRELIMINARY_ESTIMATES = Object.fromEntries(
   ])),
 );
 
-export function getAcePreliminaryEstimate({ interest = "", location = "", conversation = "" } = {}) {
-  const allText = `${interest} ${location} ${conversation}`.toLowerCase();
+function buildServiceEstimate(option, facility) {
+  const site=FACILITIES[facility], monthlyTotal=Number(option.basePrice||1000);
+  return {
+    id:`${facility}-${option.id}`, subject:`${site.facilityCode} ${option.name} Preliminary Estimate`, ...site,
+    serviceName:option.name, monthlyTotal, currency:"USD", creditCardFeePercent:3.5, termMonths:12,
+    validityDays:30, demoSample:true, setupFeeStandard:199, setupFeeDue:0,
+    promotion:"$199 one-time setup fee waived for AI Concierge customers",
+    lineItems:[
+      { quantity:1, description:`${option.name} — ${option.short}`, unitPrice:monthlyTotal, total:monthlyTotal },
+      { quantity:1, description:"Standard onboarding and configuration", unitPrice:199, discount:199, total:0 },
+    ],
+  };
+}
+
+function bestCatalogOption(interest, selectedProduct, allText) {
+  const options=BUDDY_DEMO_CATALOG[String(interest||"").trim()]||[];
+  const selected=String(selectedProduct||"").toLowerCase();
+  if(selected){const exact=options.find(option=>option.name.toLowerCase()===selected);if(exact)return exact;}
+  const words=allText.split(/\s+/).filter(word=>word.length>=4);
+  return options.find(option=>option.name.toLowerCase().split(/\s+/).filter(word=>word.length>=4).some(word=>words.includes(word)))||options[0]||BASELINE_SERVICES.find(option=>option.match.test(allText))||null;
+}
+
+export function getAcePreliminaryEstimate({ interest = "", location = "", conversation = "", selectedProduct = "" } = {}) {
+  const allText = `${interest} ${selectedProduct} ${location} ${conversation}`.toLowerCase();
   const conversationText=String(conversation||"").toLowerCase();
   const facility=/\b(rdu|raleigh|durham|north carolina)\b/.test(allText)?"rdu":/\b(tpa|tampa|florida)\b/.test(allText)?"tpa":"tpa";
+  const selectedOption=bestCatalogOption(interest,selectedProduct,allText);
+  if(/high density/i.test(selectedProduct)&&selectedOption)return buildServiceEstimate(selectedOption,facility);
   let size="";
   if(/\b(quarter(?: of)? (?:a )?rack|1\/4 rack|three 4u|3 4u|three four u|three four-u)\b/.test(conversationText))size="quarter";
   else if(/\b(half rack|1\/2 rack)\b/.test(conversationText))size="half";
@@ -90,8 +124,9 @@ export function getAcePreliminaryEstimate({ interest = "", location = "", conver
   else if(/\b(quarter(?: of)? (?:a )?rack|1\/4 rack)\b/.test(allText))size="quarter";
   else if(/\b(half rack|1\/2 rack)\b/.test(allText))size="half";
   else if(/\b(full rack|whole rack|full cabinet)\b/.test(allText))size="full";
-  if(!size)return null;
-  return JSON.parse(JSON.stringify(ACE_PRELIMINARY_ESTIMATES[`${facility}-${size}-rack`]));
+  if(size)return JSON.parse(JSON.stringify(ACE_PRELIMINARY_ESTIMATES[`${facility}-${size}-rack`]));
+  const option=selectedOption;
+  return option?buildServiceEstimate(option,facility):null;
 }
 
 export function getBuddyDemoOptions(interest = "") {

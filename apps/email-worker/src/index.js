@@ -51,6 +51,13 @@ export default {
     const brand = brandName(env);
     const assistant = assistantName(env);
     const accent = brandColor(env);
+    const estimateCallbackBlock = callNowUrl ? `
+      <div style="margin:28px 0;padding:24px;background:#fff5f5;border:1px solid #f1caca;border-radius:8px;text-align:center;">
+        <h3 style="margin:0 0 10px;color:${esc(accent)};">Questions or changes?</h3>
+        <p style="margin:0 0 18px;line-height:1.5;">Have ${esc(assistant)} call you to review this estimate, answer questions, or capture requested changes.</p>
+        <a href="${esc(callNowUrl)}" style="display:inline-block;background:${esc(accent)};color:#ffffff;text-decoration:none;font-weight:700;padding:14px 24px;border-radius:6px;">Have ${esc(assistant)} Call Me About This Estimate</a>
+        <p style="margin:14px 0 0;font-size:12px;color:#666;">This link stays available whenever you want to continue the conversation.</p>
+      </div>` : "";
 
     let subject;
     let html;
@@ -114,6 +121,7 @@ export default {
           <tr><td style="border:1px solid #d4d4d8;"><strong>Credit-card fee</strong></td><td style="border:1px solid #d4d4d8;">${esc(quote.creditCardFeePercent || 3.5)}%</td></tr>
         </table>
         <p style="margin-top:22px;font-size:13px;color:#666;line-height:1.5;">This estimate is based on the information available during the call and is subject to technical review, facility availability, final configuration approval, taxes, and the final service agreement. An ACE Host specialist may revise the configuration if additional requirements are identified.</p>
+        ${estimateCallbackBlock}
         <p style="margin-bottom:0;">Reply to this email or speak with an ACE Host specialist to approve the configuration and receive the final service agreement.</p>`);
     } else if (messageType === "buddy-docusign") {
       subject = `Your ${brand} agreement is ready to sign`;
