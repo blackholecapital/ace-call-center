@@ -110,6 +110,25 @@ function jsonResponse(status, payload, correlationId, requestId, workerEnv, sour
   });
 }
 
+function htmlResponse(status, html, correlationId, requestId, workerEnv, source = {}) {
+  const tenant = tenantContext(workerEnv || {}, source);
+  return new Response(String(html || ""), {
+    status,
+    headers:{
+      "Content-Type":"text/html; charset=utf-8",
+      "Cache-Control":"private, no-store, max-age=0",
+      "Content-Security-Policy":"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+      "Referrer-Policy":"no-referrer",
+      "X-Content-Type-Options":"nosniff",
+      "X-Correlation-Id":correlationId || "",
+      "X-Request-Id":requestId || "",
+      "X-Tenant-Id":tenant.tenantId,
+      "X-Corporate-Id":tenant.corporateId,
+      "X-Location-Id":tenant.locationId,
+    },
+  });
+}
+
 export default {
   async fetch(request, workerEnv, ctx) {
     env.setBindings(workerEnv);
@@ -153,6 +172,11 @@ export default {
           try { body = await request.json(); } catch { body = {}; }
         }
         const result = await match.fn({ method, body, params:match.params, user:authResult.user, env:workerEnv });
+        if (result?.responseType === "html") {
+          const status = Number(result.status || (result.ok ? 200 : 400));
+          metrics.increment("http.responses." + status);
+          return htmlResponse(status, result.html, correlationId, requestId, workerEnv, requestScope);
+        }
         const status = result.ok ? 200 : 400;
         metrics.increment("http.responses." + status);
         return jsonResponse(status, result, correlationId, requestId, workerEnv, requestScope);

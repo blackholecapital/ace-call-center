@@ -3,6 +3,8 @@ import { createSigningShortLink, resolveSigningShortLink } from "./docusign-link
 import { fetchSignedEnvelopePdf } from "./docusign-document.js";
 import { rememberSmsContact, getSmsContact, getSmsContactById } from "./sms-session.js";
 import { createDeliveryEvent, googleCalendarConfigured, googleCalendarTimeZone, isSlotAvailable } from "./google-calendar.js";
+import { isAceCallbackReply } from "./sms-reply.js";
+import { nextAppointmentRequest } from "./appointment-request.js";
 
 async function sha256(value) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(value)));
@@ -195,6 +197,25 @@ async function processSalesHandoff(env,payload={}){
   return{ok:true,contactId,handoff:{status:"Open",createdAt,reason,requirements}};
 }
 
+async function processManualMessage(env,payload={}){
+  const contactId=String(payload.contactId||payload.contact?.id||"");
+  const contact=await resolveContact(env,contactId,payload);
+  const channel=String(payload.channel||"sms").toLowerCase();
+  const message=String(payload.message||payload.body||"").trim();
+  if(channel!=="sms")throw new Error("Only SMS is supported for manual dashboard messages");
+  if(!contactId||!contact?.id)throw new Error("A valid contact is required");
+  if(!contact.phone)throw new Error("The contact has no phone number");
+  if(contact.optedOut||contact.smsConsent===false)throw new Error("The contact has opted out of SMS");
+  if(!message)throw new Error("SMS message is required");
+  const sms=await callBinding(env.SMS,"https://sms.internal/internal/send",{
+    contactId,contact,message,
+    messageType:String(payload.messageType||"ace-dashboard-manual"),
+  });
+  if(!sms?.ok)throw new Error(sms?.error||"Twilio did not accept the SMS");
+  await updateDashboardContact(env,contactId,{outreachStatus:"SMS sent",lastSmsSentAt:new Date().toISOString()});
+  return{ok:true,contactId,sms};
+}
+
 function formatSalesAppointment(startIso,timeZone="America/New_York"){
   if(!startIso)return"Time requested; awaiting sales-team confirmation";
   return new Intl.DateTimeFormat("en-US",{timeZone,weekday:"long",month:"long",day:"numeric",hour:"numeric",minute:"2-digit",timeZoneName:"short"}).format(new Date(startIso));
@@ -206,7 +227,7 @@ async function processSalesAppointment(env,payload={}){
   const action=String(payload.action||"request").toLowerCase();
   if(!["request","approve","reschedule"].includes(action))throw new Error("Unsupported sales appointment action");
   const timeZone=String(payload.timeZone||contact.appointmentTimeZone||"America/New_York");
-  const candidate=String(payload.startIso||payload.start||contact.appointmentStart||"");
+  const candidate=String(payload.startIso||payload.start||(action==="request"?"":contact.appointmentStart)||"");
   if(action!=="request"&&(!candidate||Number.isNaN(new Date(candidate).getTime())))throw new Error("A valid appointment date and time is required");
   const startIso=candidate&&!Number.isNaN(new Date(candidate).getTime())?new Date(candidate).toISOString():"";
   const durationMinutes=Math.max(15,Math.min(240,Number(payload.durationMinutes||30)));
@@ -214,10 +235,15 @@ async function processSalesAppointment(env,payload={}){
   const now=new Date().toISOString();
   const status=action==="request"?"Requested":action==="approve"?"Approved":"Rescheduled";
   const label=formatSalesAppointment(startIso,timeZone);
+  const requestState=action==="request"
+    ?nextAppointmentRequest(contact,{start:startIso||null,end:endIso||null,timeZone,label,notes:String(payload.notes||payload.requirements||"").trim(),requestedAt:now,source:String(payload.source||"ace-workflow")})
+    :{requestId:String(contact.appointmentRequestId||""),requestCount:Number(contact.appointmentRequestCount||0),requestedAt:String(contact.appointmentRequestedAt||now),appointmentHistory:Array.isArray(contact.appointmentHistory)?contact.appointmentHistory:[]};
+  const {requestId,requestCount,requestedAt,appointmentHistory}=requestState;
   const patch={
     appointmentStatus:status,appointmentStart:startIso||null,appointmentEnd:endIso||null,appointmentTimeZone:timeZone,
     appointmentNotes:String(payload.notes||contact.appointmentNotes||payload.requirements||"").trim(),
-    appointmentRequestedAt:contact.appointmentRequestedAt||now,appointmentUpdatedAt:now,
+    appointmentRequestId:requestId,appointmentRequestCount:requestCount,appointmentHistory,
+    appointmentRequestedAt:requestedAt,appointmentUpdatedAt:now,
     appointmentNotificationStatus:action==="request"?"Awaiting sales approval":"Sending",
   };
   let saved=await persistContact(env,contact,patch);
@@ -226,7 +252,7 @@ async function processSalesAppointment(env,payload={}){
   let sms={ok:false,skipped:true},email={ok:false,skipped:true};
   if(action!=="request"){
     const verb=action==="reschedule"?"rescheduled":"confirmed";
-    if(saved.smsConsent!==false&&saved.phone)sms=await callBinding(env.SMS,"https://sms.internal/internal/send",{contactId,contact:saved,messageType:`ace-sales-appointment-${action}`,message:`Hi${saved.firstName?` ${saved.firstName}`:""}, your ${brandName(env)} sales consultation is ${verb} for ${label}. Reply CALL any time to reconnect with ${assistantName(env)}. Reply STOP to opt out.`});
+    if(saved.smsConsent!==false&&saved.phone)sms=await callBinding(env.SMS,"https://sms.internal/internal/send",{contactId,contact:saved,messageType:`ace-sales-appointment-${action}`,message:`Hi${saved.firstName?` ${saved.firstName}`:""}, your ${brandName(env)} sales consultation is ${verb} for ${label}. Reply ACE any time to reconnect with ${assistantName(env)}. Reply STOP to opt out.`});
     if(saved.email)email=await callBinding(env.EMAIL,"https://email.internal/internal/send",{contactId,contact:saved,messageType:`ace-sales-appointment-${action}`,appointment:{status,start:startIso,end:endIso,timeZone,label,notes:patch.appointmentNotes}});
     const notified=[sms,email].some(result=>result?.ok===true);
     const attempted=[sms,email].some(result=>result?.skipped!==true);
@@ -236,8 +262,8 @@ async function processSalesAppointment(env,payload={}){
   }
 
   const eventType={request:"sales.appointment.requested",approve:"sales.appointment.approved",reschedule:"sales.appointment.rescheduled"}[action];
-  await emit(env,{type:eventType,contactId,appointmentStatus:status,appointmentStart:startIso,appointmentEnd:endIso,timeZone,label,notes:patch.appointmentNotes,smsOk:sms?.ok===true,emailOk:email?.ok===true,source:String(payload.source||"ace-workflow")});
-  return{ok:true,contactId,appointment:{status,start:startIso,end:endIso,timeZone,label,notes:patch.appointmentNotes,notificationStatus:saved.appointmentNotificationStatus},sms,email};
+  await emit(env,{type:eventType,contactId,appointmentRequestId:requestId,appointmentRequestCount:requestCount,appointmentStatus:status,appointmentStart:startIso,appointmentEnd:endIso,timeZone,label,notes:patch.appointmentNotes,smsOk:sms?.ok===true,emailOk:email?.ok===true,source:String(payload.source||"ace-workflow")});
+  return{ok:true,contactId,appointment:{requestId,requestCount,status,start:startIso,end:endIso,timeZone,label,notes:patch.appointmentNotes,notificationStatus:saved.appointmentNotificationStatus},sms,email};
 }
 
 async function scheduleDelivery(env,payload={}){
@@ -263,11 +289,12 @@ export default { async fetch(request,env,ctx){
   if(url.pathname==="/internal/contact-status"&&request.method==="POST"){const auth=await authorizeInternal(request,env);if(!auth.ok)return auth.response;const p=await request.json().catch(()=>({}));const contact=await getSmsContactById(env,p.contactId||"").catch(()=>null)||await getDashboardContact(env,p.contactId||"").catch(()=>null);if(!contact)return Response.json({ok:false,error:"Contact not found"},{status:404});const conversation=await recentConversation(env,contact.id||p.contactId,Number(p.conversationLimit||16));return Response.json({ok:true,contactId:contact.id||p.contactId,documentStatus:contact.documentStatus||"Not sent",selectedProduct:contact.selectedProduct||"",docusignEnvelopeId:contact.docusignEnvelopeId||"",deliveryStatus:contact.deliveryStatus||"Not scheduled",deliveryAt:contact.deliveryAt||"",calendarEventId:contact.calendarEventId||"",estimateStatus:contact.estimateStatus||"",estimateNumber:contact.estimateNumber||"",estimateSentAt:contact.estimateSentAt||"",requirementsSummary:contact.requirementsSummary||"",salesHandoffStatus:contact.salesHandoffStatus||"",appointmentStatus:contact.appointmentStatus||"",appointmentStart:contact.appointmentStart||"",appointmentTimeZone:contact.appointmentTimeZone||"",recentConversation:conversation});}
   if(url.pathname==="/internal/delivery-options"&&request.method==="POST"){const auth=await authorizeInternal(request,env);if(!auth.ok)return auth.response;try{const p=await request.json().catch(()=>({}));const contact=await resolveContact(env,p.contactId||"",p);if(!contact?.id)return Response.json({ok:false,error:"Contact not found"},{status:404});if(String(contact.documentStatus||"").toLowerCase()!=="signed")return Response.json({ok:false,error:"Agreement must be signed before implementation scheduling"},{status:409});return Response.json({ok:true,contactId:contact.id,selectedProduct:contact.selectedProduct||"",...(await buildDeliveryOptions(env))});}catch(e){return Response.json({ok:false,error:e.message,googleCalendarConfigured:googleCalendarConfigured(env)},{status:502});}}
   if(url.pathname==="/internal/delivery-schedule"&&request.method==="POST"){const auth=await authorizeInternal(request,env);if(!auth.ok)return auth.response;try{const result=await scheduleDelivery(env,await request.json().catch(()=>({})));return Response.json(result,{status:result.ok?200:result.conflict?409:400});}catch(e){return Response.json({ok:false,error:e.message,googleCalendarConfigured:googleCalendarConfigured(env)},{status:502});}}
-  if(url.pathname==="/internal/leads"&&request.method==="POST"){const auth=await authorizeInternal(request,env);if(!auth.ok)return auth.response;const payload=await request.json(),method=preferredMethod(payload),contact=payload.contact||{},results={};if(contact.phone&&contact.id){try{results.smsSession={ok:await rememberSmsContact(env,contact)};}catch(e){results.smsSession={ok:false,error:e.message};}}results.email=contact.email?await callBinding(env.EMAIL,"https://email.internal/internal/send",payload):{ok:false,skipped:true};if(!smsConsentGranted(payload))results.sms={ok:false,skipped:true,reason:"SMS consent not granted"};else if(contact.phone){const assistant=assistantName(env),brand=brandName(env),message=method==="Phone"?`Hi ${contact.firstName||"there"}, I'm ${assistant}, the ${brand} AI assistant. I received your request${contact.interest?` about ${contact.interest}`:""}. I'll call you in about 15 seconds. Reply STOP to opt out.`:`Hi ${contact.firstName||"there"}, I'm ${assistant}, the ${brand} AI assistant. I received your request${contact.interest?` about ${contact.interest}`:""}. Would you like me to call you? Reply YES or CALL and I'll ring you. Reply STOP to opt out.`;results.sms=await callBinding(env.SMS,"https://sms.internal/internal/send",{...payload,messageType:method==="Phone"?"buddy-precall":"buddy-welcome",message});}else results.sms={ok:false,skipped:true};const contactFlow=method==="Phone"?"sms-then-call":method==="Text"?"sms-awaiting-call-reply":"email";if(method==="Phone"&&contact.phone){const delayed=(async()=>{await sleep(15000);try{await requestBuddyCall(env,contact,{type:"lead-form",preferredContactMethod:"Phone",delaySeconds:15});}catch(e){await updateDashboardContact(env,contact.id,{callStatus:"Call failed"});}})();if(ctx?.waitUntil)ctx.waitUntil(delayed);}await emit(env,{type:"lead.created",contactId:payload.contactId||contact.id||"",payload});return Response.json({ok:true,preferredContactMethod:method,contactFlow,results});}
-  if(url.pathname==="/internal/sms-reply"&&request.method==="POST"){const auth=await authorizeInternal(request,env);if(!auth.ok)return auth.response;const p=await request.json(),reply=String(p.body||p.Body||p.message||"").trim(),from=p.from||p.From||p.phone||"",wantsCall=/^(yes|y|call|call me|yes please|please call|sure|ok|okay)\b/i.test(reply);let contact=null,source="none";try{contact=await getSmsContact(env,from);if(contact)source="d1-sms-session";}catch{}if(!contact){contact=await getDashboardContactByPhone(env,from);if(contact)source="dashboard-fallback";}console.log("SMS reply matched",{from,reply,wantsCall,matched:Boolean(contact),source,contactId:contact?.id||""});await emit(env,{type:"sms.reply",contactId:contact?.id||"",from,reply,wantsCall,source});if(!wantsCall)return Response.json({ok:true,action:"none",matched:Boolean(contact),source});if(!contact)return Response.json({ok:false,error:"No lead matched the replying phone number"},{status:404});try{return Response.json({ok:true,action:"call",contactId:contact.id,source,call:await requestBuddyCall(env,contact,{type:"sms-reply",reply,source})});}catch(e){await updateDashboardContact(env,contact.id,{callStatus:"Call failed"});return Response.json({ok:false,error:e.message,contactId:contact.id,source},{status:502});}}
+  if(url.pathname==="/internal/leads"&&request.method==="POST"){const auth=await authorizeInternal(request,env);if(!auth.ok)return auth.response;const payload=await request.json(),method=preferredMethod(payload),contact=payload.contact||{},results={};if(contact.phone&&contact.id){try{results.smsSession={ok:await rememberSmsContact(env,contact)};}catch(e){results.smsSession={ok:false,error:e.message};}}results.email=contact.email?await callBinding(env.EMAIL,"https://email.internal/internal/send",payload):{ok:false,skipped:true};if(!smsConsentGranted(payload))results.sms={ok:false,skipped:true,reason:"SMS consent not granted"};else if(contact.phone){const assistant=assistantName(env),brand=brandName(env),message=method==="Phone"?`Hi ${contact.firstName||"there"}, I'm ${assistant}, the ${brand} AI assistant. I received your request${contact.interest?` about ${contact.interest}`:""}. I'll call you in about 15 seconds. If you miss the call or aren't available, reply ACE at any time and I'll call you immediately. Reply STOP to opt out.`:`Hi ${contact.firstName||"there"}, I'm ${assistant}, the ${brand} AI assistant. I received your request${contact.interest?` about ${contact.interest}`:""}. Would you like me to call you? Reply ACE and I'll ring you. Reply STOP to opt out.`;results.sms=await callBinding(env.SMS,"https://sms.internal/internal/send",{...payload,messageType:method==="Phone"?"ace-precall":"ace-welcome",message});}else results.sms={ok:false,skipped:true};const contactFlow=method==="Phone"?"sms-then-call":method==="Text"?"sms-awaiting-call-reply":"email";if(method==="Phone"&&contact.phone){const delayed=(async()=>{await sleep(15000);try{await requestBuddyCall(env,contact,{type:"lead-form",preferredContactMethod:"Phone",delaySeconds:15});}catch(e){await updateDashboardContact(env,contact.id,{callStatus:"Call failed"});}})();if(ctx?.waitUntil)ctx.waitUntil(delayed);}await emit(env,{type:"lead.created",contactId:payload.contactId||contact.id||"",payload});return Response.json({ok:true,preferredContactMethod:method,contactFlow,results});}
+  if(url.pathname==="/internal/sms-reply"&&request.method==="POST"){const auth=await authorizeInternal(request,env);if(!auth.ok)return auth.response;const p=await request.json(),reply=String(p.body||p.Body||p.message||"").trim(),from=p.from||p.From||p.phone||"",wantsCall=isAceCallbackReply(reply);let contact=null,source="none";try{contact=await getSmsContact(env,from);if(contact)source="d1-sms-session";}catch{}if(!contact){contact=await getDashboardContactByPhone(env,from);if(contact)source="dashboard-fallback";}console.log("ACE SMS reply matched",{from,reply,wantsCall,matched:Boolean(contact),source,contactId:contact?.id||""});await emit(env,{type:"sms.reply",contactId:contact?.id||"",from,reply,wantsCall,source});if(!wantsCall)return Response.json({ok:true,action:"none",matched:Boolean(contact),source});if(!contact)return Response.json({ok:false,error:"No ACE lead matched the replying phone number"},{status:404});try{return Response.json({ok:true,action:"call",contactId:contact.id,source,call:await requestBuddyCall(env,contact,{type:"sms-reply",reply,source})});}catch(e){await updateDashboardContact(env,contact.id,{callStatus:"Call failed"});return Response.json({ok:false,error:e.message,contactId:contact.id,source},{status:502});}}
   if(url.pathname==="/internal/calls"&&request.method==="POST"){const auth=await authorizeInternal(request,env);if(!auth.ok)return auth.response;const p=await request.json(),contact=p.contact||await getSmsContactById(env,p.contactId||"")||await getDashboardContact(env,p.contactId||"");if(!contact)return Response.json({ok:false,error:"Contact not found"},{status:404});try{return Response.json({ok:true,service:"voice",result:await requestBuddyCall(env,contact,p.trigger||{type:"manual"})});}catch(e){return Response.json({ok:false,service:"voice",error:e.message},{status:502});}}
   if(url.pathname==="/internal/preliminary-estimate"&&request.method==="POST"){const auth=await authorizeInternal(request,env);if(!auth.ok)return auth.response;try{return Response.json(await processPreliminaryEstimate(env,await request.json()));}catch(e){return Response.json({ok:false,error:e.message},{status:502});}}
   if(url.pathname==="/internal/sales-handoff"&&request.method==="POST"){const auth=await authorizeInternal(request,env);if(!auth.ok)return auth.response;try{return Response.json(await processSalesHandoff(env,await request.json()));}catch(e){return Response.json({ok:false,error:e.message},{status:502});}}
+  if(url.pathname==="/internal/messages"&&request.method==="POST"){const auth=await authorizeInternal(request,env);if(!auth.ok)return auth.response;try{return Response.json(await processManualMessage(env,await request.json()));}catch(e){return Response.json({ok:false,error:e.message},{status:502});}}
   if(url.pathname==="/internal/sales-appointment"&&request.method==="POST"){const auth=await authorizeInternal(request,env);if(!auth.ok)return auth.response;try{return Response.json(await processSalesAppointment(env,await request.json()));}catch(e){return Response.json({ok:false,error:e.message},{status:502});}}
   if(url.pathname==="/internal/product-interest"&&request.method==="POST"){const auth=await authorizeInternal(request,env);if(!auth.ok)return auth.response;try{return Response.json(await processProductInterest(env,await request.json()));}catch(e){return Response.json({ok:false,error:e.message},{status:502});}}
   if(url.pathname==="/internal/product-selected"&&request.method==="POST"){const auth=await authorizeInternal(request,env);if(!auth.ok)return auth.response;try{return Response.json(await processProductSelection(env,await request.json()));}catch(e){return Response.json({ok:false,error:e.message,docusignConfigured:docusignConfigured(env)},{status:502});}}

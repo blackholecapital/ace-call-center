@@ -63,6 +63,21 @@ function initQueue(workerEnv) {
   }
 }
 
+function htmlResponse(status, html, correlationId, requestId) {
+  return new Response(String(html || ""), {
+    status,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "private, no-store, max-age=0",
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+      "Referrer-Policy": "no-referrer",
+      "X-Content-Type-Options": "nosniff",
+      "X-Correlation-Id": correlationId || "",
+      "X-Request-Id": requestId || "",
+    },
+  });
+}
+
 function ensureSeed() {
   const data = readDb();
   if (!data.contacts.length) {
@@ -135,7 +150,12 @@ module.exports = {
           try { body = await request.json(); } catch { body = {}; }
         }
 
-        const result = await match.fn({ method, body, params: match.params, user: authResult.user });
+        const result = await match.fn({ method, body, params: match.params, user: authResult.user, env: workerEnv });
+        if (result?.responseType === "html") {
+          const status = Number(result.status || (result.ok ? 200 : 400));
+          metrics.increment("http.responses." + status);
+          return htmlResponse(status, result.html, correlationId, requestId);
+        }
         const status = result.ok ? 200 : 400;
         const duration = Date.now() - startTime;
         logger.info("Response", { method, path: pathname, status, duration });
