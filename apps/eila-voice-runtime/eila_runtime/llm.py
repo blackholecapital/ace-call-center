@@ -31,7 +31,18 @@ class StreamingLlm:
             async with client.stream(
                 "POST",
                 url,
-                json={"model": self.settings.llm_model, "prompt": prompt, "stream": True},
+                json={
+                    "model": self.settings.llm_model,
+                    "prompt": prompt,
+                    "stream": True,
+                    "think": self.settings.llm_think,
+                    "keep_alive": self.settings.llm_keep_alive,
+                    "options": {
+                        "temperature": self.settings.llm_temperature,
+                        "num_predict": self.settings.llm_num_predict,
+                        "num_ctx": self.settings.llm_num_ctx,
+                    },
+                },
             ) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
