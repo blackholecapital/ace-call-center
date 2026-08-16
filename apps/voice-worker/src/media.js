@@ -40,7 +40,7 @@ function requestsEstimateDelivery(value=""){return /\b(?:email|send|prepare|crea
 function confirmsEstimateDelivery(value=""){return /\b(?:send|email)(?: it| that| the estimate| the quote)?(?: now| please)?\b|\byou can send it\b|^(?:yes|yes please|sure|okay|ok|go ahead|do it|please do)[.! ]*$/i.test(String(value).trim());}
 function offersEstimate(value=""){return /\b(?:email|send|prepare|put together|create)\b.{0,50}\b(?:estimate|quote|proposal)\b|\b(?:estimate|quote|proposal)\b.{0,50}\b(?:email|send|prepare|put together|create)\b/i.test(String(value));}
 function estimateRequirements(state,current=""){const turns=(state.conversationHistory||[]).filter(turn=>turn.role==="user").map(turn=>String(turn.content||"").trim()).filter(Boolean);if(current)turns.push(String(current).trim());return [...new Set(turns)].join(" ");}
-function runtimeSalesPrompt(state,transcript,options=[]){
+function runtimeSalesPrompt(state,transcript,options=[],preface=""){
   return `SYSTEM: You are Alley, a warm, highly natural sales consultant for ACE Host speaking on a live phone call. Sound like a capable human account executive, never like a phone menu.
 
 ACE Host operates facilities in Tampa, Florida and Raleigh, North Carolina.
@@ -59,6 +59,8 @@ ${recentConversation(state)||"Alley has just opened the call."}
 
 PROSPECT JUST SAID:
 ${String(transcript||"")}
+
+${preface?`Alley has already spoken this brief acknowledgement: "${preface}" Begin directly with the useful response and do not repeat or paraphrase that acknowledgement.`:""}
 
 Never greet the prospect again, never thank them for connecting, and never reintroduce Alley or ACE Host—the opening has already done that. Be personable and conversational: answer ordinary small talk directly and warmly. One brief, generic Tampa or Raleigh remark is fine, but never invent current weather, sports results, news, or statistics. On the first response, allow one rapport exchange, then ask one broad question about what they want to accomplish. After that, ask no more than one genuinely necessary clarification. Do not run a technical checklist and do not ask questions already answered. Once the prospect gives a rack size or a clear usable need, recommend the closest fit and offer to email a demo estimate. Approved demo pricing is: quarter rack $399 per month, half rack $799 per month, full rack $1,499 per month, with the standard $199 one-time setup fee waived for AI Concierge customers. Explain that the estimate is subject to technical review. If the need is custom or unclear after one clarification, offer a sales-team handoff using the exact requirements already captured. Do not mention numbered options. Do not claim an estimate, message, handoff, or appointment was sent or created; the application confirms those actions separately. Never keep looping back to requirements after enough information exists to quote or hand off. In data-center language, “three 4U servers” means three servers that are each four rack units tall. Keep the reply to one or two concise natural sentences, normally under 36 words. Return only the exact words Alley should say.`;
 }
@@ -112,7 +114,7 @@ export function handleTwilioMediaSocket(request,env,ctx){
     mediaChunks:0,mediaBytes:0,lastTimestamp:"",lastSequenceNumber:"",transcriptCount:0,stt:null,utteranceParts:[],turnGeneration:0,responseCount:0,
     selectedProduct:null,documentStatus:"Not sent",signatureAcknowledged:false,deliveryOptions:[],awaitingDeliveryChoice:false,deliveryScheduled:false,
     optionsOffered:false,awaitingProductChoice:false,lastUtterance:"",lastUtteranceAt:0,lastClarifyAt:0,lastPendingDocPromptAt:0,
-    conversationHistory:[],discoveryTurns:0,openingSent:false,openingStartedAt:0,openingAudioStarted:false,openingPlaybackComplete:false,openingMarkName:"",playbackActive:false,openingResponseHandled:false,quoteRequested:false,quoteSent:false,estimateNumber:"",
+    conversationHistory:[],discoveryTurns:0,openingSent:false,openingStartedAt:0,openingAudioStarted:false,openingPlaybackComplete:false,openingMarkName:"",playbackActive:false,openingResponseHandled:false,quoteRequested:false,quoteSent:false,estimateNumber:"",finalFlushTimer:null,
   };
   const pushEvent=(e)=>{const p=emitEvent(env,{tenantId:state.tenantId,corporateId:state.corporateId,locationId:state.locationId,...e});if(ctx?.waitUntil)ctx.waitUntil(p);else p.catch(()=>{});};
   const sendTwilioClear=()=>{state.playbackActive=false;if(state.streamSid)try{server.send(JSON.stringify({event:"clear",streamSid:state.streamSid}));}catch{}};
@@ -122,11 +124,17 @@ export function handleTwilioMediaSocket(request,env,ctx){
   async function speak(text,generation,eventType="buddy.turn.completed"){
     if(eilaRuntimeEnabled(env)){
       try{
-        const streamed=await streamEilaSpeech(env,text,{onAudio:(payload)=>{if(generation!==state.turnGeneration)return false;if(eventType==="buddy.sales.opening")state.openingAudioStarted=true;sendTwilioAudioBase64(payload);return true;}});
-        if(streamed.cancelled||generation!==state.turnGeneration)return;
+        const phrases=eventType==="buddy.sales.opening"?(String(text).match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[String(text)]).map(part=>part.trim()).filter(Boolean):[String(text)];
+        let audioBytes=0,audioChunks=0,firstAudioMs=null,totalLatencyMs=0;
+        for(const phrase of phrases){
+          const streamed=await streamEilaSpeech(env,phrase,{onAudio:(payload)=>{if(generation!==state.turnGeneration)return false;if(eventType==="buddy.sales.opening")state.openingAudioStarted=true;sendTwilioAudioBase64(payload);return true;}});
+          if(streamed.cancelled||generation!==state.turnGeneration)return;
+          audioBytes+=streamed.audioBytes;audioChunks+=streamed.audioChunks;totalLatencyMs+=streamed.totalLatencyMs;
+          if(firstAudioMs===null)firstAudioMs=streamed.firstAudioMs;
+        }
         state.responseCount+=1;const markName=`eila-${state.responseCount}-${Date.now()}`;if(eventType==="buddy.sales.opening")state.openingMarkName=markName;sendTwilioMark(markName);
-        console.log("EILA streamed voice response sent",{callSid:state.callSid,contactId:state.contactId,responseText:text,audioBytes:streamed.audioBytes,audioChunks:streamed.audioChunks,firstAudioMs:streamed.firstAudioMs,totalLatencyMs:streamed.totalLatencyMs,eventType});
-        pushEvent({type:eventType,callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,response:text,audioBytes:streamed.audioBytes,firstAudioMs:streamed.firstAudioMs,totalLatencyMs:streamed.totalLatencyMs,runtime:"eila-voice-runtime"});
+        console.log("EILA streamed voice response sent",{callSid:state.callSid,contactId:state.contactId,responseText:text,audioBytes,audioChunks,firstAudioMs,totalLatencyMs,eventType});
+        pushEvent({type:eventType,callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,response:text,audioBytes,firstAudioMs,totalLatencyMs,runtime:"eila-voice-runtime"});
         return;
       }catch(error){
         console.error("EILA speech stream failed",{callSid:state.callSid,contactId:state.contactId,error:error?.message||String(error),partialAudio:Boolean(error?.partialAudio)});
@@ -138,16 +146,25 @@ export function handleTwilioMediaSocket(request,env,ctx){
     console.log("Alley voice response sent",{callSid:state.callSid,contactId:state.contactId,responseText:text,audioBytes:audio.length,eventType});
     pushEvent({type:eventType,callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,response:text,audioBytes:audio.length});
   }
+  function fastSalesPreface(transcript=""){
+    const clean=normalizeUtterance(transcript);
+    if(/\bhow (?:are|re) you\b/.test(clean))return "I'm doing great, thank you.";
+    if(!state.openingResponseHandled&&/\b(good|great|well|fine|okay|ok)\b/.test(clean))return "Glad to hear it.";
+    if(requestsEstimateDelivery(clean)||requestsHumanHandoff(clean))return "Absolutely.";
+    return "Got it.";
+  }
   async function speakSalesTurn(transcript,options,generation,eventType){
     if(eilaRuntimeEnabled(env)){
       try{
-        const streamed=await streamEilaTurn(env,{prompt:runtimeSalesPrompt(state,transcript,options),sessionId:state.callSid,tenantId:state.tenantId,assistantName:String(env.ASSISTANT_NAME||"Alley"),metadata:{contactId:state.contactId,interest:state.interest,location:state.location,locationId:state.locationId}},{onAudio:(payload)=>{if(generation!==state.turnGeneration)return false;sendTwilioAudioBase64(payload);return true;}});
+        const preface=fastSalesPreface(transcript);
+        const streamed=await streamEilaTurn(env,{prompt:runtimeSalesPrompt(state,transcript,options,preface),preface,sessionId:state.callSid,tenantId:state.tenantId,assistantName:String(env.ASSISTANT_NAME||"Alley"),metadata:{contactId:state.contactId,interest:state.interest,location:state.location,locationId:state.locationId}},{onAudio:(payload)=>{if(generation!==state.turnGeneration)return false;sendTwilioAudioBase64(payload);return true;}});
         if(streamed.cancelled||generation!==state.turnGeneration)return "";
         if(!streamed.text)throw new Error("EILA runtime returned an empty sales response");
         state.responseCount+=1;sendTwilioMark(`eila-${state.responseCount}-${Date.now()}`);
-        console.log("EILA streamed sales turn sent",{callSid:state.callSid,contactId:state.contactId,responseText:streamed.text,audioBytes:streamed.audioBytes,audioChunks:streamed.audioChunks,firstAudioMs:streamed.firstAudioMs,totalLatencyMs:streamed.totalLatencyMs,eventType});
-        pushEvent({type:eventType,callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,response:streamed.text,audioBytes:streamed.audioBytes,firstAudioMs:streamed.firstAudioMs,totalLatencyMs:streamed.totalLatencyMs,runtime:"eila-voice-runtime"});
-        return streamed.text;
+        const responseText=`${preface} ${streamed.text}`.trim();
+        console.log("EILA streamed sales turn sent",{callSid:state.callSid,contactId:state.contactId,responseText,audioBytes:streamed.audioBytes,audioChunks:streamed.audioChunks,firstAudioMs:streamed.firstAudioMs,totalLatencyMs:streamed.totalLatencyMs,eventType,preface});
+        pushEvent({type:eventType,callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,response:responseText,audioBytes:streamed.audioBytes,firstAudioMs:streamed.firstAudioMs,totalLatencyMs:streamed.totalLatencyMs,runtime:"eila-voice-runtime",preface});
+        return responseText;
       }catch(error){
         console.error("EILA sales stream failed",{callSid:state.callSid,contactId:state.contactId,error:error?.message||String(error),partialAudio:Boolean(error?.partialAudio)});
         if(error?.partialAudio)throw error;
@@ -168,7 +185,7 @@ export function handleTwilioMediaSocket(request,env,ctx){
   function openingText(){
     const assistant=String(env.ASSISTANT_NAME||"Alley"),firstName=naturalFirstName(state.firstName);
     const hello=firstName?`Hi ${firstName}, this is ${assistant} from ${brand}.`:`Hi, this is ${assistant} from ${brand}.`;
-    return `${hello} Thanks for reaching out to us. We help businesses with secure data-center infrastructure, hosting, connectivity, and AI automation from our Tampa and Raleigh facilities. I wanted to personally welcome you—how are you doing today?`;
+    return `${hello} Thanks for reaching out. We provide secure data-center infrastructure, hosting, connectivity, and AI automation in Tampa and Raleigh. How are you doing today?`;
   }
   function duplicateUtterance(clean){
     const n=normalizeUtterance(clean),now=Date.now(); if(!n)return true;
@@ -194,6 +211,8 @@ export function handleTwilioMediaSocket(request,env,ctx){
         const estimateIntent=requestsEstimateDelivery(clean)||(state.quoteRequested&&confirmsEstimateDelivery(clean));
         if(estimateIntent){
           state.quoteRequested=true;
+          await speak("Absolutely. I'll put that estimate together now.",generation,"buddy.estimate.preparing");
+          if(generation!==state.turnGeneration)return;
           const requirements=estimateRequirements(state,clean);
           const quote=getAcePreliminaryEstimate({interest:state.interest,location:state.location,conversation:requirements});
           if(state.quoteSent){
@@ -306,19 +325,27 @@ export function handleTwilioMediaSocket(request,env,ctx){
     })(); if(ctx?.waitUntil)ctx.waitUntil(work);else work.catch(()=>{});
   }
 
-  function flushUtterance(){if(!state.utteranceParts.length)return;const t=state.utteranceParts.join(" ").replace(/\s+/g," ").trim();state.utteranceParts=[];processUtterance(t);}
+  function clearFinalFlush(){if(state.finalFlushTimer!==null){clearTimeout(state.finalFlushTimer);state.finalFlushTimer=null;}}
+  function flushUtterance(reason="unknown"){clearFinalFlush();if(!state.utteranceParts.length)return;const t=state.utteranceParts.join(" ").replace(/\s+/g," ").trim();state.utteranceParts=[];console.log("Flushing caller utterance",{callSid:state.callSid,contactId:state.contactId,reason,transcript:t});processUtterance(t);}
+  function scheduleFinalFlush(transcript=""){
+    clearFinalFlush();
+    const terminal=/[.!?][\"')\]]?$/.test(String(transcript).trim());
+    const configured=Number(terminal?env.DEEPGRAM_TERMINAL_GRACE_MS:env.DEEPGRAM_FINAL_GRACE_MS);
+    const graceMs=Number.isFinite(configured)&&configured>=100?configured:(terminal?350:900);
+    state.finalFlushTimer=setTimeout(()=>{state.finalFlushTimer=null;flushUtterance(terminal?"terminal-final-grace":"final-grace");},graceMs);
+  }
   function startTranscription(){
     if(state.stt||!env.DEEPGRAM_API_KEY)return;
     state.stt=createDeepgramTranscriber(env,{
       onOpen:({model})=>{console.log("Deepgram STT connected",{callSid:state.callSid,contactId:state.contactId,model});pushEvent({type:"stt.connected",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,model});},
-      onTranscript:({transcript,isFinal,speechFinal,confidence})=>{if(isFinal)state.transcriptCount+=1;console.log("Deepgram transcript",{callSid:state.callSid,contactId:state.contactId,transcript,isFinal,speechFinal,confidence});if(isFinal){state.utteranceParts.push(transcript);pushEvent({type:"stt.transcript.final",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,transcript,confidence,speechFinal});if(speechFinal)flushUtterance();}},
+      onTranscript:({transcript,isFinal,speechFinal,confidence})=>{clearFinalFlush();if(isFinal)state.transcriptCount+=1;console.log("Deepgram transcript",{callSid:state.callSid,contactId:state.contactId,transcript,isFinal,speechFinal,confidence});if(isFinal){state.utteranceParts.push(transcript);pushEvent({type:"stt.transcript.final",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,transcript,confidence,speechFinal});if(speechFinal)flushUtterance("speech-final");else scheduleFinalFlush(transcript);}},
       onSpeechStarted:()=>{if(state.playbackActive){state.turnGeneration+=1;sendTwilioClear();}pushEvent({type:"stt.speech.started",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId});},
-      onUtteranceEnd:()=>{flushUtterance();pushEvent({type:"stt.utterance.end",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId});},
+      onUtteranceEnd:()=>{flushUtterance("utterance-end");pushEvent({type:"stt.utterance.end",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId});},
       onClose:({code,reason})=>{console.log("Deepgram STT closed",{callSid:state.callSid,code,reason});pushEvent({type:"stt.closed",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,closeCode:String(code||"")});},
       onError:()=>{console.error("Deepgram STT websocket error",{callSid:state.callSid});pushEvent({type:"stt.error",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId});},
     });
   }
-  function stopTranscription(){try{state.stt?.finalize();}catch{}try{state.stt?.close();}catch{}state.stt=null;}
+  function stopTranscription(){clearFinalFlush();try{state.stt?.finalize();}catch{}try{state.stt?.close();}catch{}state.stt=null;}
   pushEvent({type:"stream.websocket.connected"});
 
   server.addEventListener("message",(event)=>{
