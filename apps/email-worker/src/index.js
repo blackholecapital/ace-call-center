@@ -87,6 +87,7 @@ export default {
       </tr>`).join("");
       subject = `${brand} Estimate ${estimateNumber} — ${quote.serviceName || productName}`;
       html = shell(env, "Complete service estimate", `
+        ${quote.demoSample ? `<div style="margin:0 0 20px;padding:12px 16px;background:#fff3cd;border:1px solid #e8c45c;border-radius:6px;font-weight:700;">DEMO SAMPLE ESTIMATE — subject to technical review and final approval.</div>` : ""}
         <table width="100%" cellpadding="8" cellspacing="0" style="margin:0 0 24px;border-collapse:collapse;">
           <tr style="background:#f4f4f5;"><th style="border:1px solid #d4d4d8;">Estimate #</th><th style="border:1px solid #d4d4d8;">Subject</th><th style="border:1px solid #d4d4d8;">Created</th><th style="border:1px solid #d4d4d8;">Valid until</th></tr>
           <tr><td style="border:1px solid #d4d4d8;text-align:center;">${esc(estimateNumber)}</td><td style="border:1px solid #d4d4d8;">${esc(quote.subject || quote.serviceName || productName)}</td><td style="border:1px solid #d4d4d8;text-align:center;">${esc(quoteDate(created))}</td><td style="border:1px solid #d4d4d8;text-align:center;">${esc(quoteDate(validUntil))}</td></tr>
@@ -106,6 +107,8 @@ export default {
         </table>
         <table width="100%" cellpadding="8" cellspacing="0" style="margin-top:22px;border-collapse:collapse;">
           <tr><td style="border:1px solid #d4d4d8;"><strong>Contract term</strong></td><td style="border:1px solid #d4d4d8;">${esc(quote.termMonths || 12)} months</td></tr>
+          <tr><td style="border:1px solid #d4d4d8;"><strong>Standard one-time setup fee</strong></td><td style="border:1px solid #d4d4d8;">${esc(money(quote.setupFeeStandard || 0, currency))}</td></tr>
+          <tr><td style="border:1px solid #d4d4d8;"><strong>Setup fee due</strong></td><td style="border:1px solid #d4d4d8;">${esc(money(quote.setupFeeDue || 0, currency))}</td></tr>
           <tr><td style="border:1px solid #d4d4d8;"><strong>Promotion</strong></td><td style="border:1px solid #d4d4d8;">${esc(quote.promotion || "None")}</td></tr>
           <tr><td style="border:1px solid #d4d4d8;"><strong>Credit-card fee</strong></td><td style="border:1px solid #d4d4d8;">${esc(quote.creditCardFeePercent || 3.5)}%</td></tr>
         </table>
