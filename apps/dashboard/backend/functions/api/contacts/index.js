@@ -84,8 +84,20 @@ async function workflowFacts(env) {
     for (const row of result.results || []) {
       const id = String(row.contact_id || "");
       if (!id) continue;
-      const fact = facts.get(id) || { contacted:false, engaged:false, latestCallStatus:"", updatedAt:0 };
+      const fact = facts.get(id) || {
+        contacted:false,
+        engaged:false,
+        estimateSent:false,
+        docsSent:false,
+        scheduled:false,
+        latestCallStatus:"",
+        latestEmail:null,
+        estimate:null,
+        updatedAt:0,
+      };
       const type = String(row.event_type || "").toLowerCase();
+      let payload = {};
+      try { payload = JSON.parse(row.payload_json || "{}"); } catch {}
 
       if (
         type === "call.requested" || type === "call.created" ||
@@ -102,6 +114,31 @@ async function workflowFacts(env) {
       ) {
         fact.contacted = true;
         fact.engaged = true;
+      }
+
+      if (type === "email.sent") {
+        fact.contacted = true;
+        fact.latestEmail = payload;
+        if (String(payload.messageType || "").toLowerCase() === "ace-preliminary-estimate") {
+          fact.engaged = true;
+          fact.estimateSent = true;
+        }
+      }
+      if (type === "estimate.sent") {
+        fact.contacted = true;
+        fact.engaged = true;
+        fact.estimateSent = true;
+        fact.estimate = payload;
+      }
+      if (type === "docusign.sent") {
+        fact.contacted = true;
+        fact.engaged = true;
+        fact.docsSent = true;
+      }
+      if (type === "delivery.scheduled") {
+        fact.contacted = true;
+        fact.engaged = true;
+        fact.scheduled = true;
       }
 
       if (type.startsWith("call.")) {
@@ -136,6 +173,15 @@ async function mergedContacts(env) {
       _buddyContacted:Boolean(fact?.contacted),
       _buddyEngaged:Boolean(fact?.engaged),
     };
+    if (fact?.latestEmail) next.outreachStatus = "Sent";
+    if (fact?.estimateSent) {
+      next.estimateStatus = "Sent";
+      next.estimateNumber = next.estimateNumber || fact.estimate?.estimateNumber || "";
+      next.estimateSentAt = next.estimateSentAt || (fact.estimate?.ts ? new Date(fact.estimate.ts).toISOString() : "");
+      next.estimatedMonthlyTotal = Number(next.estimatedMonthlyTotal || fact.estimate?.monthlyTotal || 0);
+    }
+    if (fact?.docsSent && (!next.documentStatus || /not sent/i.test(next.documentStatus))) next.documentStatus = "Sent";
+    if (fact?.scheduled && (!next.deliveryStatus || /not scheduled/i.test(next.deliveryStatus))) next.deliveryStatus = "Scheduled";
     if (fact?.engaged && (!next.callStatus || /not called|requested|ringing|initiated/i.test(next.callStatus))) {
       next.callStatus = "Call connected";
     } else if (fact?.latestCallStatus && (!next.callStatus || /not called/i.test(next.callStatus))) {
