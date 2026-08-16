@@ -16,6 +16,10 @@ PUBLIC_BASE_URL = "https://ace-voice-worker.cryptocapitalgroupfl.workers.dev"
 MEDIA_STREAM_URL = "wss://ace-voice-worker.cryptocapitalgroupfl.workers.dev/twilio/media"
 DEEPGRAM_STT_MODEL = "nova-3"
 DEEPGRAM_ENDPOINTING_MS = "300"
+DEEPGRAM_UTTERANCE_END_MS = "1000"
+DEEPGRAM_FINAL_GRACE_MS = "900"
+DEEPGRAM_TERMINAL_GRACE_MS = "350"
+DEEPGRAM_NO_DELAY = "true"
 BUDDY_RUNTIME_URL = "https://erkn5tqy74wqqi-8000.proxy.runpod.net"
 EILA_RUNTIME_URL = "https://erkn5tqy74wqqi-8100.proxy.runpod.net"
 EILA_RUNTIME_STREAMING = "true"
@@ -42,3 +46,7 @@ queue = "ace-communication-events"
 [[analytics_engine_datasets]]
 binding = "ANALYTICS"
 dataset = "ace_voice_events"
+
+[[services]]
+binding = "CONCIERGE"
+service = "ace-concierge-worker"
