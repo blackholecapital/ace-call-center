@@ -51,19 +51,27 @@ class PhraseChunker:
             self.first_maximum_words if self._phrase_count == 0 else self.maximum_words
         )
 
-        should_emit = (
-            bool(self._strong_boundary.search(clean))
-            or (len(words) >= self.target_words and bool(self._soft_boundary.search(clean)))
-            or len(words) >= maximum_words
-        )
-        if not should_emit:
-            return []
+        if bool(self._strong_boundary.search(clean)) or (
+            len(words) >= self.target_words and bool(self._soft_boundary.search(clean))
+        ):
+            return self._emit(clean)
 
-        return self._emit(clean)
+        # Wait for one additional word before enforcing the hard limit. Streaming
+        # models commonly deliver terminal punctuation as the next token; emitting
+        # at exactly the limit would strand that punctuation in its own audio chunk.
+        if len(words) > maximum_words:
+            word_matches = list(re.finditer(r"\S+", self._buffer))
+            split_at = word_matches[maximum_words - 1].end()
+            phrase = self._buffer[:split_at].strip()
+            remainder = self._buffer[split_at:]
+            return self._emit(phrase, remainder)
+
+        return []
 
     def flush(self) -> list[str]:
         clean = self._buffer.strip()
         self._buffer = ""
-        if clean:
+        if clean and re.search(r"\w", clean):
             self._phrase_count += 1
-        return [clean] if clean else []
+            return [clean]
+        return []
