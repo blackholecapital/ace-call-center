@@ -4,6 +4,7 @@ import { chooseDeliveryOption, describeDeliveryOptions, naturalDeliveryLabel } f
 import { eilaRuntimeEnabled, streamEilaSpeech, streamEilaTurn } from "./eila-runtime.js";
 import { openAiTwilioAudio } from "./openai-tts.js";
 import { conversationOpening, meaningfulBargeIn } from "./conversation.js";
+import { parseRequestedAppointment } from "./appointment-time.js";
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data, null, 2), { status, headers:{"content-type":"application/json; charset=utf-8"} });
@@ -33,14 +34,16 @@ function recentConversation(state){
   return (state.conversationHistory||[]).slice(-16).map(turn=>`${turn.role==="assistant"?"ALLEY":"PROSPECT"}: ${turn.content}`).join("\n");
 }
 function availableProducts(options=[]){
-  return options.length?options.map((option,index)=>`Option ${index+1}: ${option.name}. ${option.short}.`).join("\n"):"No fixed demo products are loaded for this inquiry.";
+  return options.length?options.map(option=>`${option.name}: ${option.short}. Starting at $${Number(option.basePrice||0).toLocaleString("en-US")} per month.`).join("\n"):"No fixed demo products are loaded for this inquiry.";
 }
 function requestsSalesFollowup(value=""){return /\b(sales|human|person|representative|transfer|callback|call back|appointment|schedule|proposal|quote|estimate)\b/i.test(String(value));}
 function requestsHumanHandoff(value=""){return /\b(sales(?:person| team)?|human|representative|transfer|callback|call back|have (?:someone|the team) call|talk to (?:someone|a person))\b/i.test(String(value));}
-function requestsSalesAppointment(value=""){return /\b(?:appointment|meeting|consultation)\b|\b(?:schedule|book|set up|arrange)\b.{0,35}\b(?:call|time|sales|meeting|appointment)\b/i.test(String(value));}
+function requestsSalesAppointment(value=""){return /\b(?:appointment|meeting|consultation)\b|\b(?:schedule|book|set up|arrange)\b.{0,35}\b(?:call|time|sales|meeting|appointment)\b|\b(?:available|availability)\b.{0,35}\b(?:today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/i.test(String(value));}
 function requestsEstimateDelivery(value=""){return /\b(?:email|send|prepare|create|get|receive)\b.{0,40}\b(?:estimate|quote|proposal)\b|\b(?:estimate|quote|proposal)\b.{0,40}\b(?:email|send|prepare|create|get|receive)\b/i.test(String(value));}
 function confirmsEstimateDelivery(value=""){return /\b(?:send|email)(?: it| that| the estimate| the quote)?(?: now| please)?\b|\byou can send it\b|^(?:yes|yes please|sure|okay|ok|go ahead|do it|please do)[.! ]*$/i.test(String(value).trim());}
 function offersEstimate(value=""){return /\b(?:email|send|prepare|put together|create)\b.{0,50}\b(?:estimate|quote|proposal)\b|\b(?:estimate|quote|proposal)\b.{0,50}\b(?:email|send|prepare|put together|create)\b/i.test(String(value));}
+function offersAppointment(value=""){return /\b(?:schedule|arrange|request|book)\b.{0,45}\b(?:meeting|appointment|sales call|time with (?:the )?sales)\b|\b(?:meeting|appointment|sales call)\b.{0,45}\b(?:schedule|arrange|request|book)\b/i.test(String(value));}
+function requestsCallClose(value=""){return /\b(?:no thanks|no thank you|that(?:'s| is) (?:all|it)|nothing else|all set|i(?:'ll| will) (?:just )?review (?:it|the estimate)|goodbye|bye for now|have a good (?:day|night))\b/i.test(String(value));}
 function estimateRequirements(state,current=""){const turns=(state.conversationHistory||[]).filter(turn=>turn.role==="user").map(turn=>String(turn.content||"").trim()).filter(Boolean);if(current)turns.push(String(current).trim());return [...new Set(turns)].join(" ");}
 function runtimeSalesPrompt(state,transcript,options=[],preface=""){
   return `SYSTEM: You are Alley, a warm, highly natural sales consultant for ACE Host speaking on a live phone call. Sound like a capable human account executive, never like a phone menu.
@@ -50,6 +53,7 @@ Lead first name: ${state.firstName||"unknown"}
 Requested service: ${state.interest||"general infrastructure"}
 Requested location: ${state.location||"not specified"}
 Selected product: ${state.selectedProduct?.name||"none"}
+Lead notes: ${state.comments||"none provided"}
 
 CURRENT DEMO PRODUCTS:
 ${availableProducts(options)}
@@ -57,6 +61,8 @@ ${availableProducts(options)}
 CALL STAGE: ${state.isFollowup?"Follow-up conversation with prior context already loaded.":state.openingResponseHandled?`Active consultative sales conversation; ${state.discoveryTurns} customer response(s) completed.`:"The prospect is responding to Alley’s opening for the first time."}
 PRIOR REQUIREMENTS SUMMARY: ${state.priorRequirementsSummary||"none"}
 PRIOR ESTIMATE: ${state.estimateNumber||"none sent"}
+ESTIMATE WORKFLOW: ${state.quoteSent?"A preliminary estimate was sent. Answer questions or changes first, then offer a sales-team meeting once.":state.quoteRequested?"Alley has offered an estimate; a clear yes means the application will send it.":"No estimate has been offered yet."}
+APPOINTMENT WORKFLOW: ${state.appointmentStatus||"No sales appointment requested."}${state.appointmentStart?` Proposed time: ${state.appointmentStart}.`:""}
 CALL TRIGGER: ${state.triggerType||"new lead"}
 
 RECENT CONVERSATION:
@@ -67,11 +73,11 @@ ${String(transcript||"")}
 
 ${preface?`Alley has already spoken this brief acknowledgement: "${preface}" Begin directly with the useful response and do not repeat or paraphrase that acknowledgement.`:""}
 
-Never greet the prospect again or reintroduce Alley or ACE Host—the opening has already done that. Speak like a relaxed, curious account executive, not a script. Follow the prospect's lead. Answer ordinary small talk, side questions, and light rapport directly before making a natural transition back to business; general Tampa, Raleigh, baseball, or local conversation is welcome, but never invent live weather, scores, news, or statistics. If asked about something current that is not in the context, say you do not have a live feed and keep the exchange natural.
+Never greet the prospect again or reintroduce Alley or ACE Host—the opening has already done that. Speak like a relaxed, curious account executive, not a script. Follow the prospect's lead. Answer ordinary small talk, side questions, and light rapport directly, including answering "how are you" naturally, and allow one or two genuine back-and-forth rapport turns before transitioning to business. Do not use canned acknowledgements such as "Glad to hear it," "Got it," or "That's great" as a complete response. General Tampa, Raleigh, baseball, or local conversation is welcome, but never invent live weather, scores, news, or statistics. If asked about something current that is not in the context, say you do not have a live feed and keep the exchange natural.
 
 Invite the prospect to explain what they are trying to accomplish in their own words. Reflect back the important parts so they know they were heard. Ask only one question at a time, and only when its answer will materially improve a recommendation or estimate. Do not run a checklist, repeat a question, or force the conversation back to requirements when the prospect is still engaging naturally. Use the prior conversation and requirements summary on follow-up calls instead of making the prospect start over.
 
-When enough is known, recommend the closest fit and briefly explain why. Then give the prospect a natural choice: continue working through it with Alley now, have Alley prepare and email a preliminary estimate, or have the sales team follow up with the captured notes. They can also call Alley back any time by replying CALL to the text or using the call link in the email. Approved demo pricing is: quarter rack $399 per month, half rack $799 per month, full rack $1,499 per month, with the standard $199 one-time setup fee waived for AI Concierge customers. Explain that an estimate is preliminary and subject to technical review. Do not mention numbered options. Do not claim an estimate, message, handoff, or appointment was sent or created; the application confirms those actions separately. In data-center language, “three 4U servers” means three servers that are each four rack units tall.
+When enough is known, reflect back two or three important requirements, recommend the closest fit, and briefly explain why. Then ask whether the prospect wants a preliminary estimate emailed now. After an estimate has actually been sent, help with changes or questions, then offer a sales-team meeting. Do not ask endless discovery questions. They can call Alley back any time by replying CALL to the text or using the call link in the estimate email. Use the approved base prices shown above; rack pricing is quarter rack $399 per month, half rack $799 per month, full rack $1,499 per month, with the standard $199 one-time setup fee waived for AI Concierge customers. Explain that an estimate is preliminary and subject to technical review. Do not mention numbered options. Do not claim an estimate, message, handoff, appointment, or email was sent or created; the application confirms those actions separately. In data-center language, “three 4U servers” means three servers that are each four rack units tall.
 
 Most replies should be one to three short, natural sentences and under 60 words. A brief rapport exchange may be shorter. Return only the exact words Alley should say.`;
 }
@@ -108,7 +114,7 @@ async function conciergeRequest(env,path,payload){
   const r=env.CONCIERGE?await env.CONCIERGE.fetch(req):await fetch(`${publicBase}${path}`,{method:"POST",headers:{"content-type":"application/json","x-internal-call-secret":secret},body:JSON.stringify(payload)});
   const t=await r.text();let d={};try{d=t?JSON.parse(t):{};}catch{d={raw:t};}if(!r.ok||d?.ok===false){console.error("Concierge handoff rejected",{path,status:r.status,body:d,via:env.CONCIERGE?"service-binding":"public-fetch"});throw new Error(d?.error||`Concierge request failed (${r.status})`);}return d;
 }
-const notifyProductSelection=(env,p)=>conciergeRequest(env,"/internal/product-selected",p);
+const notifyProductInterest=(env,p)=>conciergeRequest(env,"/internal/product-interest",p);
 const sendPreliminaryEstimate=(env,p)=>conciergeRequest(env,"/internal/preliminary-estimate",p);
 const createSalesHandoff=(env,p)=>conciergeRequest(env,"/internal/sales-handoff",p);
 const createSalesAppointment=(env,p)=>conciergeRequest(env,"/internal/sales-appointment",p);
@@ -126,8 +132,8 @@ export function handleTwilioMediaSocket(request,env,ctx){
     mediaChunks:0,mediaBytes:0,lastTimestamp:"",lastSequenceNumber:"",transcriptCount:0,stt:null,utteranceParts:[],turnGeneration:0,responseCount:0,
     selectedProduct:null,documentStatus:"Not sent",signatureAcknowledged:false,deliveryOptions:[],awaitingDeliveryChoice:false,deliveryScheduled:false,
     optionsOffered:false,awaitingProductChoice:false,lastUtterance:"",lastUtteranceAt:0,lastClarifyAt:0,lastPendingDocPromptAt:0,
-    conversationHistory:[],discoveryTurns:0,openingSent:false,openingStartedAt:0,openingAudioStarted:false,openingPlaybackComplete:false,openingMarkName:"",activeMarkName:"",playbackActive:false,openingResponseHandled:false,quoteRequested:false,quoteSent:false,estimateNumber:"",finalFlushTimer:null,lastPreface:"",
-    triggerType:"",priorRequirementsSummary:"",priorSelectedProduct:"",isFollowup:false,contextLoaded:false,pendingBargeIn:false,
+    conversationHistory:[],discoveryTurns:0,openingSent:false,openingStartedAt:0,openingAudioStarted:false,openingPlaybackComplete:false,openingMarkName:"",activeMarkName:"",playbackActive:false,openingResponseHandled:false,quoteRequested:false,quoteSent:false,estimateNumber:"",finalFlushTimer:null,
+    triggerType:"",priorRequirementsSummary:"",priorSelectedProduct:"",isFollowup:false,contextLoaded:false,pendingBargeIn:false,appointmentStatus:"",appointmentStart:"",appointmentOffered:false,closingScheduled:false,
   };
   const pushEvent=(e)=>{const p=emitEvent(env,{tenantId:state.tenantId,corporateId:state.corporateId,locationId:state.locationId,...e});if(ctx?.waitUntil)ctx.waitUntil(p);else p.catch(()=>{});};
   const sendTwilioClear=()=>{state.playbackActive=false;state.activeMarkName="";if(state.streamSid)try{server.send(JSON.stringify({event:"clear",streamSid:state.streamSid}));}catch{}};
@@ -160,28 +166,16 @@ export function handleTwilioMediaSocket(request,env,ctx){
     console.log("Alley voice response sent",{callSid:state.callSid,contactId:state.contactId,responseText:text,audioBytes:audio.length,eventType});
     pushEvent({type:eventType,callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,response:text,audioBytes:audio.length});
   }
-  function fastSalesPreface(transcript=""){
-    const clean=normalizeUtterance(transcript);
-    let preface="";
-    if(/\bhow (?:are|re) you\b/.test(clean))preface="I'm doing great, thank you.";
-    else if(!state.openingResponseHandled&&/\b(good|great|well|fine|okay|ok)\b/.test(clean))preface="Glad to hear it.";
-    else if(requestsEstimateDelivery(clean)||requestsHumanHandoff(clean))preface="Absolutely.";
-    else if(/\b(?:need|looking for|trying to|want|require|server|rack|hosting|power|bandwidth)\b/.test(clean))preface="Got it.";
-    if(preface&&preface===state.lastPreface)preface="";
-    state.lastPreface=preface;
-    return preface;
-  }
   async function speakSalesTurn(transcript,options,generation,eventType){
     if(eilaRuntimeEnabled(env)){
       try{
-        const preface=fastSalesPreface(transcript);
-        const streamed=await streamEilaTurn(env,{prompt:runtimeSalesPrompt(state,transcript,options,preface),preface,sessionId:state.callSid,tenantId:state.tenantId,assistantName:String(env.ASSISTANT_NAME||"Alley"),metadata:{contactId:state.contactId,interest:state.interest,location:state.location,locationId:state.locationId}},{onAudio:(payload)=>{if(generation!==state.turnGeneration)return false;sendTwilioAudioBase64(payload);return true;}});
+        const streamed=await streamEilaTurn(env,{prompt:runtimeSalesPrompt(state,transcript,options),preface:"",sessionId:state.callSid,tenantId:state.tenantId,assistantName:String(env.ASSISTANT_NAME||"Alley"),metadata:{contactId:state.contactId,interest:state.interest,location:state.location,locationId:state.locationId}},{onAudio:(payload)=>{if(generation!==state.turnGeneration)return false;sendTwilioAudioBase64(payload);return true;}});
         if(streamed.cancelled||generation!==state.turnGeneration)return "";
         if(!streamed.text)throw new Error("EILA runtime returned an empty sales response");
         state.responseCount+=1;sendTwilioMark(`eila-${state.responseCount}-${Date.now()}`);
-        const responseText=`${preface} ${streamed.text}`.trim();
-        console.log("EILA streamed sales turn sent",{callSid:state.callSid,contactId:state.contactId,responseText,audioBytes:streamed.audioBytes,audioChunks:streamed.audioChunks,firstAudioMs:streamed.firstAudioMs,totalLatencyMs:streamed.totalLatencyMs,eventType,preface});
-        pushEvent({type:eventType,callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,response:responseText,audioBytes:streamed.audioBytes,firstAudioMs:streamed.firstAudioMs,totalLatencyMs:streamed.totalLatencyMs,runtime:"eila-voice-runtime",preface});
+        const responseText=streamed.text.trim();
+        console.log("EILA streamed sales turn sent",{callSid:state.callSid,contactId:state.contactId,responseText,audioBytes:streamed.audioBytes,audioChunks:streamed.audioChunks,firstAudioMs:streamed.firstAudioMs,totalLatencyMs:streamed.totalLatencyMs,eventType});
+        pushEvent({type:eventType,callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,response:responseText,audioBytes:streamed.audioBytes,firstAudioMs:streamed.firstAudioMs,totalLatencyMs:streamed.totalLatencyMs,runtime:"eila-voice-runtime"});
         return responseText;
       }catch(error){
         console.error("EILA sales stream failed",{callSid:state.callSid,contactId:state.contactId,error:error?.message||String(error),partialAudio:Boolean(error?.partialAudio)});
@@ -211,6 +205,7 @@ export function handleTwilioMediaSocket(request,env,ctx){
     state.conversationHistory.push({role:"user",content:clean},{role:"assistant",content:responseText});
     state.openingResponseHandled=true;
     if(offersEstimate(responseText))state.quoteRequested=true;
+    if(offersAppointment(responseText))state.appointmentOffered=true;
   }
   function handoffPayload(requirements,reason){return{contactId:state.contactId,firstName:state.firstName,lastName:state.lastName,phone:state.phone,email:state.email,interest:state.interest,location:state.location,comments:state.comments,leadScore:state.leadScore,preferredContactTime:state.preferredContactTime,requirements,reason,callSid:state.callSid,source:"ace-voice-worker"};}
 
@@ -224,13 +219,22 @@ export function handleTwilioMediaSocket(request,env,ctx){
       try{
         pushEvent({type:"buddy.turn.started",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,transcript:clean});
         const options=getBuddyDemoOptions(state.interest);
-        const estimateIntent=requestsEstimateDelivery(clean)||(state.quoteRequested&&confirmsEstimateDelivery(clean));
+        if(requestsCallClose(clean)&&(state.quoteSent||state.appointmentStatus||/\b(?:goodbye|bye for now|have a good (?:day|night))\b/i.test(clean))){
+          const closing=state.quoteSent
+            ? `Of course${state.firstName?`, ${state.firstName}`:""}. Take your time reviewing the estimate, and use the call link in the email whenever you'd like to make a change or talk it through. Thanks for speaking with me today—have a great day.`
+            : `Of course${state.firstName?`, ${state.firstName}`:""}. Thanks for speaking with me today. If anything comes up, just get back in touch and I'll pick up where we left off. Have a great day.`;
+          await speak(closing,generation,"buddy.sales.call-closing");
+          state.closingScheduled=true;
+          if(ctx?.waitUntil)ctx.waitUntil((async()=>{await sleep(11000);await completeTwilioCall(env,state.callSid);})());
+          return;
+        }
+        const estimateIntent=requestsEstimateDelivery(clean)||(!state.quoteSent&&state.quoteRequested&&confirmsEstimateDelivery(clean));
         if(estimateIntent){
           state.quoteRequested=true;
           await speak("Absolutely. I'll put that estimate together now.",generation,"buddy.estimate.preparing");
           if(generation!==state.turnGeneration)return;
           const requirements=estimateRequirements(state,clean);
-          const quote=getAcePreliminaryEstimate({interest:state.interest,location:state.location,conversation:requirements});
+          const quote=getAcePreliminaryEstimate({interest:state.interest,selectedProduct:state.selectedProduct?.name||state.priorSelectedProduct,location:state.location,conversation:requirements});
           if(state.quoteSent){
             await speak(`Your ACE Host estimate ${state.estimateNumber||""} has already been emailed to ${state.email||"the address on your request"}.`,generation,"buddy.estimate.already-sent");
             return;
@@ -247,7 +251,8 @@ export function handleTwilioMediaSocket(request,env,ctx){
             state.estimateNumber=String(result?.quote?.estimateNumber||"");
             if(!state.quoteSent)throw new Error(result?.email?.error||"Resend did not confirm estimate delivery");
             state.conversationHistory.push({role:"user",content:clean},{role:"assistant",content:`Estimate ${state.estimateNumber} emailed successfully.`});
-            await speak(`Done—I emailed ACE Host estimate ${state.estimateNumber} for ${quote.serviceName} in ${quote.facilityName} at ${new Intl.NumberFormat("en-US",{style:"currency",currency:quote.currency||"USD",maximumFractionDigits:0}).format(quote.monthlyTotal)} per month. If you'd like to pick this back up later, reply CALL to the text or use the call link in your email and I'll have our conversation here.`,generation,"buddy.estimate.sent");
+            state.appointmentOffered=true;
+            await speak(`Done—I emailed estimate ${state.estimateNumber} for ${quote.serviceName} at ${new Intl.NumberFormat("en-US",{style:"currency",currency:quote.currency||"USD",maximumFractionDigits:0}).format(quote.monthlyTotal)} per month. The email also has a link to call me back for questions or changes. Is there anything you'd like to adjust now, or would you like me to request a meeting with the sales team?`,generation,"buddy.estimate.sent");
           }catch(error){
             console.error("ACE estimate delivery failed",{callSid:state.callSid,contactId:state.contactId,error:error?.message||String(error)});
             pushEvent({type:"buddy.estimate.failed",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,error:error?.message||String(error)});
@@ -257,11 +262,14 @@ export function handleTwilioMediaSocket(request,env,ctx){
           return;
         }
 
-        if(requestsSalesAppointment(clean)){
+        const proposedAppointment=parseRequestedAppointment(clean,{timeZone:"America/New_York"});
+        if(requestsSalesAppointment(clean)||(state.appointmentOffered&&(confirmsEstimateDelivery(clean)||proposedAppointment))){
           const requirements=estimateRequirements(state,clean);
           try{
-            await createSalesAppointment(env,{...handoffPayload(requirements,"Customer requested a sales appointment"),action:"request",notes:requirements,timeZone:"America/New_York"});
-            await speak("Absolutely. I logged a sales appointment request with everything we discussed. The team can approve a time or suggest another one, and you'll receive the confirmation by text or email.",generation,"buddy.sales.appointment-requested");
+            const result=await createSalesAppointment(env,{...handoffPayload(requirements,"Customer requested a sales appointment"),action:"request",notes:requirements,timeZone:"America/New_York",startIso:proposedAppointment?.startIso||""});
+            state.appointmentStatus="Requested";state.appointmentStart=String(result?.appointment?.start||proposedAppointment?.startIso||"");
+            const timeLine=proposedAppointment?` for ${proposedAppointment.label}`:"";
+            await speak(`I recorded your sales appointment request${timeLine}. It is pending the team's approval, not booked yet. Once they approve it or suggest another time, you'll receive a confirmation by text or email.`,generation,"buddy.sales.appointment-requested");
           }catch(error){
             console.error("ACE sales appointment request failed",{callSid:state.callSid,contactId:state.contactId,error:error?.message||String(error)});
             await speak("I couldn't confirm the appointment request, so I won't pretend it was booked. Your conversation is still attached to this lead for the sales team to review.",generation,"buddy.sales.appointment-failed");
@@ -282,15 +290,11 @@ export function handleTwilioMediaSocket(request,env,ctx){
             const selected=options[choiceIndex]; state.selectedProduct=selected; state.awaitingProductChoice=false;
             const payload={type:"buddy.product.selected",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,firstName:state.firstName,lastName:state.lastName,phone:state.phone,email:state.email,category:state.interest,interest:state.interest,location:state.location,comments:state.comments,leadScore:state.leadScore,preferredContactTime:state.preferredContactTime,selectionNumber:choiceIndex+1,productId:selected.id,productName:selected.name};
             pushEvent(payload);
-            await speak(`Great choice${state.firstName?`, ${state.firstName}`:""}. I've got you down for ${selected.name}. I'm preparing your ACE Host service proposal now.`,generation,"buddy.product.selection-preparing");
             try{
-              const result=await notifyProductSelection(env,payload); state.documentStatus="Sent";
-              const smsOk=result?.sms?.ok===true,emailOk=result?.email?.ok===true;
-              console.log("Buddy product selection handed to concierge",{contactId:state.contactId,productName:selected.name,envelopeId:result?.docusign?.envelopeId||"",smsOk,emailOk});
-              if(generation!==state.turnGeneration)return;
-              const sent=smsOk&&emailOk?"I sent the service proposal to your phone and email.":emailOk?"I sent the service proposal to your email.":smsOk?"I sent the service proposal to your phone.":"I created your service proposal, but the notification did not go through.";
-              await speak(`${sent} Sign it, then wait for the confirmation text that says we received your documents before coming back to the call. It usually takes about 30 seconds.`,generation,"buddy.product.selection-sent");
-            }catch(error){console.error("Buddy product selection handoff failed",{contactId:state.contactId,productName:selected.name,error:error?.message||String(error)});if(generation===state.turnGeneration){const requirements=estimateRequirements(state,clean);try{await createSalesHandoff(env,handoffPayload(requirements,`Proposal workflow failed for ${selected.name}`));await speak(`I saved ${selected.name} as the best current fit and created a sales-team handoff with your requirements.`,generation,"buddy.product.selection-followup");}catch{await speak(`I saved ${selected.name} as the best current fit, but I couldn't confirm the proposal or sales handoff. Your call remains attached to the lead for review.`,generation,"buddy.product.selection-followup");}}}
+              await notifyProductInterest(env,{...payload,requirements:estimateRequirements(state,clean)});
+              const responseText=await speakSalesTurn(clean,options,generation,"buddy.product.interest-saved");
+              if(responseText)rememberSalesTurn(clean,responseText);
+            }catch(error){console.error("Buddy product interest persistence failed",{contactId:state.contactId,productName:selected.name,error:error?.message||String(error)});if(generation===state.turnGeneration){const responseText=await speakSalesTurn(clean,options,generation,"buddy.product.interest-local");if(responseText)rememberSalesTurn(clean,responseText);}}
             return;
           }
 
@@ -382,7 +386,7 @@ export function handleTwilioMediaSocket(request,env,ctx){
     if(type==="start"){
       const start=message.start||{},params=start.customParameters||{};state.streamSid=String(start.streamSid||message.streamSid||"");state.callSid=String(start.callSid||"");state.accountSid=String(start.accountSid||"");state.contactId=String(params.contactId||"");state.firstName=String(params.firstName||"");state.lastName=String(params.lastName||"");state.phone=String(params.phone||"");state.email=String(params.email||"");state.interest=String(params.interest||"");state.location=String(params.location||"");state.comments=String(params.comments||"");state.leadScore=String(params.leadScore||"");state.preferredContactTime=String(params.preferredContactTime||"");state.triggerType=String(params.triggerType||"");state.tenantId=String(params.tenantId||state.tenantId);state.corporateId=String(params.corporateId||state.corporateId);state.locationId=String(params.locationId||state.locationId);const f=start.mediaFormat||{};
       console.log("Twilio media stream started",{streamSid:state.streamSid,callSid:state.callSid,contactId:state.contactId,encoding:f.encoding||"",sampleRate:f.sampleRate||"",channels:f.channels||"",sttConfigured:Boolean(env.DEEPGRAM_API_KEY),buddyRuntimeConfigured:Boolean(env.BUDDY_RUNTIME_URL&&env.BUDDY_RUNTIME_TOKEN),premiumTtsConfigured:Boolean(env.OPENAI_API_KEY),demoChoices:getBuddyDemoOptions(state.interest).length});pushEvent({type:"stream.media.started",streamSid:state.streamSid,callSid:state.callSid,contactId:state.contactId,firstName:state.firstName,interest:state.interest,location:state.location,leadScore:state.leadScore,encoding:String(f.encoding||""),sampleRate:Number(f.sampleRate||0),channels:Number(f.channels||0)});startTranscription();
-      if(!state.openingSent){state.openingSent=true;const beginOpening=(async()=>{const status=await getContactStatus(env,state.contactId);if(status){const prior=Array.isArray(status.recentConversation)?status.recentConversation:[];state.conversationHistory=prior.map(turn=>({role:turn.role==="assistant"?"assistant":"user",content:String(turn.content||"")})).filter(turn=>turn.content);state.priorRequirementsSummary=String(status.requirementsSummary||"");state.priorSelectedProduct=String(status.selectedProduct||"");state.estimateNumber=String(status.estimateNumber||"");state.quoteSent=Boolean(state.estimateNumber||String(status.estimateStatus||"").toLowerCase()==="sent");state.documentStatus=String(status.documentStatus||state.documentStatus);state.deliveryScheduled=Boolean(status.deliveryAt||String(status.deliveryStatus||"").toLowerCase()==="scheduled");if(state.priorSelectedProduct)state.selectedProduct=getBuddyDemoOptions(state.interest).find(option=>option.name===state.priorSelectedProduct)||{id:"persisted-selection",name:state.priorSelectedProduct};state.isFollowup=prior.length>0||Boolean(state.priorRequirementsSummary||state.estimateNumber||state.priorSelectedProduct);}state.contextLoaded=true;state.openingStartedAt=Date.now();const generation=++state.turnGeneration;const opening=openingText();state.conversationHistory.push({role:"assistant",content:opening});pushEvent({type:"buddy.conversation.context-loaded",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,isFollowup:state.isFollowup,priorTurns:Math.max(0,state.conversationHistory.length-1),estimateNumber:state.estimateNumber,triggerType:state.triggerType});await speak(opening,generation,state.isFollowup?"buddy.sales.followup-opening":"buddy.sales.opening");})();if(ctx?.waitUntil)ctx.waitUntil(beginOpening);else beginOpening.catch(error=>console.error("Alley opening failed",error));}
+      if(!state.openingSent){state.openingSent=true;const beginOpening=(async()=>{const status=await getContactStatus(env,state.contactId);if(status){const prior=Array.isArray(status.recentConversation)?status.recentConversation:[];state.conversationHistory=prior.map(turn=>({role:turn.role==="assistant"?"assistant":"user",content:String(turn.content||"")})).filter(turn=>turn.content);state.priorRequirementsSummary=String(status.requirementsSummary||"");state.priorSelectedProduct=String(status.selectedProduct||"");state.estimateNumber=String(status.estimateNumber||"");state.quoteSent=Boolean(state.estimateNumber||String(status.estimateStatus||"").toLowerCase()==="sent");state.documentStatus=String(status.documentStatus||state.documentStatus);state.deliveryScheduled=Boolean(status.deliveryAt||String(status.deliveryStatus||"").toLowerCase()==="scheduled");state.appointmentStatus=String(status.appointmentStatus||"");state.appointmentStart=String(status.appointmentStart||"");if(state.priorSelectedProduct)state.selectedProduct=getBuddyDemoOptions(state.interest).find(option=>option.name===state.priorSelectedProduct)||{id:"persisted-selection",name:state.priorSelectedProduct};state.isFollowup=prior.length>0||Boolean(state.priorRequirementsSummary||state.estimateNumber||state.priorSelectedProduct||state.appointmentStatus);}state.contextLoaded=true;state.openingStartedAt=Date.now();const generation=++state.turnGeneration;const opening=openingText();state.conversationHistory.push({role:"assistant",content:opening});pushEvent({type:"buddy.conversation.context-loaded",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,isFollowup:state.isFollowup,priorTurns:Math.max(0,state.conversationHistory.length-1),estimateNumber:state.estimateNumber,triggerType:state.triggerType});await speak(opening,generation,state.isFollowup?"buddy.sales.followup-opening":"buddy.sales.opening");})();if(ctx?.waitUntil)ctx.waitUntil(beginOpening);else beginOpening.catch(error=>console.error("Alley opening failed",error));}
       return;
     }
     if(type==="media"){const media=message.media||{},payload=String(media.payload||"");state.mediaChunks+=1;state.mediaBytes+=base64ByteLength(payload);state.lastTimestamp=String(media.timestamp||state.lastTimestamp||"");if(payload&&state.stt)state.stt.sendBase64(payload);if(state.mediaChunks%250===0)console.log("Twilio media heartbeat",{streamSid:state.streamSid,callSid:state.callSid,contactId:state.contactId,mediaChunks:state.mediaChunks,mediaBytes:state.mediaBytes,timestamp:state.lastTimestamp,transcriptCount:state.transcriptCount,responseCount:state.responseCount});return;}
