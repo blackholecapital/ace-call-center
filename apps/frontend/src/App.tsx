@@ -26,6 +26,7 @@ type Lead = {
   initialLeadScore?:number; leadScoreBreakdown?:{key:string;label:string;points:number}[];
   appointmentStatus?:string; appointmentStart?:string; appointmentEnd?:string; appointmentTimeZone?:string;
   appointmentNotes?:string; appointmentRequestedAt?:string; appointmentUpdatedAt?:string; appointmentNotificationStatus?:string;
+  appointmentRequestId?:string; appointmentRequestCount?:number;
 };
 type AceEvent = { id:number|string; contactId?:string; callSid?:string; type:string; role?:string; text?:string; createdAt:number; payload?:any };
 type DocumentArtifact = { id:string; kind:"estimate"|"agreement"; title:string; status:string; sentAt?:string; event?:AceEvent };
@@ -34,7 +35,7 @@ type Tab = "Pipeline" | "Leads" | "Contracts" | "Installations" | "Appointments"
 type View = "Operations" | "Accounts" | "Conversations" | "Analytics";
 type LeadAction = "email" | "call" | "sms" | "document" | "calendar" | "approve-appointment";
 
-const stages:Stage[]=["New Inquiry","Qualified","Site Review","Proposal Sent","Contracting","Provisioning","Live Account"];
+const stages:Stage[]=["Qualified","Site Review","Proposal Sent","Contracting","Provisioning","Live Account"];
 const products=["All ACE products","Dedicated Servers","Colocation Hosting","Full Rack Colocation","Crypto Mining Facility","Managed Services","VPS Hosting","Wireless Infrastructure","Telehealth Infrastructure","AI Automations"];
 const DOC_BASE="https://ace-concierge-worker.cryptocapitalgroupfl.workers.dev/docusign/document";
 const ACE_TZ="America/New_York";
@@ -138,6 +139,7 @@ function money(value:any,currency="USD"){return Number(value||0).toLocaleString(
 
 function inferStage(d:any):Stage {
   const raw=String(d?.stage||d?.status||"");
+  if(raw==="New Inquiry")return "Qualified";
   if(stages.includes(raw as Stage))return raw as Stage;
   if(raw==="Closed"||String(d?.deliveryStatus||"").toLowerCase()==="completed")return "Live Account";
   if(raw==="Scheduled"||d?.deliveryAt||["scheduled","provisioning"].includes(String(d?.deliveryStatus||"").toLowerCase()))return "Provisioning";
@@ -148,7 +150,7 @@ function inferStage(d:any):Stage {
   const call=String(d?.callStatus||"").toLowerCase();
   if(call.includes("completed")||call.includes("answered")||call.includes("connected"))return "Qualified";
   if(raw==="Contacted"||d?.outreachStatus==="Sent"||call.includes("requested")||call.includes("ringing"))return "Qualified";
-  return "New Inquiry";
+  return "Qualified";
 }
 function normalizeContact(raw:any,i:number):Lead {
   let d=raw?.data??raw;if(typeof d==="string"){try{d=JSON.parse(d);}catch{d=raw;}}
@@ -170,7 +172,8 @@ function normalizeContact(raw:any,i:number):Lead {
     appointmentStatus:d?.appointmentStatus||"",appointmentStart:d?.appointmentStart||"",appointmentEnd:d?.appointmentEnd||"",
     appointmentTimeZone:d?.appointmentTimeZone||ACE_TZ,appointmentNotes:d?.appointmentNotes||"",
     appointmentRequestedAt:d?.appointmentRequestedAt||"",appointmentUpdatedAt:d?.appointmentUpdatedAt||"",
-    appointmentNotificationStatus:d?.appointmentNotificationStatus||"",
+    appointmentNotificationStatus:d?.appointmentNotificationStatus||"",appointmentRequestId:d?.appointmentRequestId||"",
+    appointmentRequestCount:Number(d?.appointmentRequestCount||0),
   };
 }
 
@@ -183,7 +186,7 @@ export default function App(){
   useEffect(()=>{loadLeads();const timer=window.setInterval(loadLeads,5000);return()=>clearInterval(timer);},[]);
   useEffect(()=>{const load=()=>fetch("/api/buddy-events?limit=2000").then(r=>r.ok?r.json():Promise.reject()).then(p=>{const data=p?.data||{};setConversations(data.conversations||[]);setEvents(data.events||[]);setSelectedCall(current=>current?((data.conversations||[]).find((c:Conversation)=>c.callSid===current.callSid)||current):((data.conversations||[])[0]||null));}).catch(()=>{});load();const timer=window.setInterval(load,8000);return()=>clearInterval(timer);},[]);
 
-  const metrics=useMemo(()=>{const liveAccounts=leads.filter(l=>l.stage==="Live Account").length,qualified=leads.filter(l=>l.stage!=="New Inquiry").length,contracting=leads.filter(l=>["Contracting","Provisioning","Live Account"].includes(l.stage)).length,pipeline=leads.reduce((sum,l)=>sum+(l.value||0),0);return{total:leads.length,qualified,contracting,liveAccounts,pipeline};},[leads]);
+  const metrics=useMemo(()=>{const liveAccounts=leads.filter(l=>l.stage==="Live Account").length,qualified=leads.length,contracting=leads.filter(l=>["Contracting","Provisioning","Live Account"].includes(l.stage)).length,pipeline=leads.reduce((sum,l)=>sum+(l.value||0),0);return{total:leads.length,qualified,contracting,liveAccounts,pipeline};},[leads]);
   const customerFor=(id?:string)=>leads.find(l=>l.id===id);
   const eventsFor=(id?:string)=>events.filter(event=>event.contactId===id);
 

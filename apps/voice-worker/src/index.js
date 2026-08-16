@@ -178,10 +178,10 @@ export default {
       if (!(await validateTwilioFormRequest(request, env, body))) return xml("<Response></Response>", 403);
       try {
         const result = await forwardSmsReply(env, body);
-        console.log("Buddy inbound SMS processed", { from:body.From || "", body:body.Body || "", action:result?.action || "none" });
+        console.log("ACE inbound SMS processed", { from:body.From || "", body:body.Body || "", action:result?.action || "none" });
         return xml("<Response></Response>");
       } catch (error) {
-        console.error("Buddy inbound SMS failed", { from:body.From || "", error:error.message });
+        console.error("ACE inbound SMS failed", { from:body.From || "", error:error.message });
         return xml("<Response></Response>");
       }
     }
