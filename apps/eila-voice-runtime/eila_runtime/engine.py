@@ -42,7 +42,7 @@ class VoiceEngine:
             latencyMs=round((time.perf_counter() - started) * 1000),
         )
 
-    async def stream_turn(self, prompt: str, request_id: str) -> AsyncIterator[dict]:
+    async def stream_turn(self, prompt: str, request_id: str, preface: str = "") -> AsyncIterator[dict]:
         started = time.perf_counter()
         output: asyncio.Queue = asyncio.Queue()
         phrases: asyncio.Queue = asyncio.Queue()
@@ -50,6 +50,29 @@ class VoiceEngine:
         phrase_count = 0
         audio_bytes = 0
         first_audio_ms = None
+        starting_sequence = 0
+
+        clean_preface = preface.strip()
+        if clean_preface:
+            yield event("response.started", request_id)
+            yield event("text.preface", request_id, text=clean_preface)
+            speech = await self.tts.synthesize(clean_preface)
+            payload = twilio_mulaw(speech.samples, speech.sample_rate)
+            audio_bytes += len(payload)
+            for audio_chunk in chunks(
+                payload, self.settings.audio_chunk_ms, self.settings.telephony_sample_rate
+            ):
+                if first_audio_ms is None:
+                    first_audio_ms = round((time.perf_counter() - started) * 1000)
+                yield event(
+                    "audio.chunk",
+                    request_id,
+                    sequence=starting_sequence,
+                    encoding="audio/x-mulaw",
+                    sampleRate=8000,
+                    audio=base64.b64encode(audio_chunk).decode("ascii"),
+                )
+                starting_sequence += 1
 
         async def produce_text() -> None:
             chunker = PhraseChunker(
@@ -59,7 +82,8 @@ class VoiceEngine:
                 self.settings.phrase_first_max_words,
             )
             try:
-                await output.put(event("response.started", request_id))
+                if not clean_preface:
+                    await output.put(event("response.started", request_id))
                 async for token in self.llm.stream(prompt):
                     full_text.append(token)
                     await output.put(event("text.delta", request_id, delta=token))
@@ -75,7 +99,7 @@ class VoiceEngine:
 
         async def produce_audio() -> None:
             nonlocal phrase_count, audio_bytes, first_audio_ms
-            sequence = 0
+            sequence = starting_sequence
             try:
                 while True:
                     phrase = await phrases.get()
