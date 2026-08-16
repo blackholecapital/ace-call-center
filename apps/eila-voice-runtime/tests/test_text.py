@@ -18,6 +18,26 @@ class PhraseChunkerTests(unittest.TestCase):
         chunker.push("Absolutely.")
         self.assertEqual(chunker.flush(), ["Absolutely."])
 
+    def test_retains_early_soft_boundary_until_target_is_reached(self):
+        chunker = PhraseChunker(2, 6, 14)
+        self.assertEqual(chunker.push("Got it, "), [])
+        self.assertEqual(
+            chunker.push("I can definitely help you"),
+            ["Got it,"],
+        )
+        self.assertEqual(chunker.flush(), ["I can definitely help you"])
+
+    def test_caps_only_first_phrase_without_punctuation(self):
+        chunker = PhraseChunker(2, 6, 18, first_maximum_words=6)
+        self.assertEqual(
+            chunker.push("I'd be happy to help you"),
+            ["I'd be happy to help you"],
+        )
+        self.assertEqual(
+            chunker.push(" find the perfect rack space for your Tampa data center needs!"),
+            ["find the perfect rack space for your Tampa data center needs!"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
