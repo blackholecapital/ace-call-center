@@ -6,6 +6,7 @@ const tests = [
   "/api/activity-log",
   "/api/conversations",
   "/api/contacts",
+  "/api/manual-agreement",
   "/api/campaigns",
   "/api/inbox",
   "/api/settings",
