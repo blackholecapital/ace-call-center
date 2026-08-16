@@ -56,6 +56,7 @@ class VoiceEngine:
                 self.settings.phrase_min_words,
                 self.settings.phrase_target_words,
                 self.settings.phrase_max_words,
+                self.settings.phrase_first_max_words,
             )
             try:
                 await output.put(event("response.started", request_id))
