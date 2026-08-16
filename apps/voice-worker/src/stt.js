@@ -11,14 +11,19 @@ export function createDeepgramTranscriber(env, handlers = {}) {
 
   const model = String(env.DEEPGRAM_STT_MODEL || "nova-3").trim();
   const endpointing = String(env.DEEPGRAM_ENDPOINTING_MS || "300").trim();
+  const utteranceEndMs = String(env.DEEPGRAM_UTTERANCE_END_MS || "1000").trim();
   const url = new URL("wss://api.deepgram.com/v1/listen");
   url.searchParams.set("encoding", "mulaw");
   url.searchParams.set("sample_rate", "8000");
   url.searchParams.set("channels", "1");
   url.searchParams.set("model", model);
   url.searchParams.set("smart_format", "true");
+  url.searchParams.set("no_delay", String(env.DEEPGRAM_NO_DELAY || "true"));
+  url.searchParams.set("punctuate", "true");
   url.searchParams.set("interim_results", "true");
   url.searchParams.set("endpointing", endpointing);
+  url.searchParams.set("utterance_end_ms", utteranceEndMs);
+  url.searchParams.set("vad_events", "true");
 
   const socket = new WebSocket(url.toString(), ["token", apiKey]);
   let open = false;
@@ -32,7 +37,7 @@ export function createDeepgramTranscriber(env, handlers = {}) {
 
   socket.addEventListener("open", () => {
     open = true;
-    handlers.onOpen?.({ model, endpointing });
+    handlers.onOpen?.({ model, endpointing, utteranceEndMs });
     flushPending();
   });
 
