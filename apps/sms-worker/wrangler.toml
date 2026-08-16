@@ -11,6 +11,8 @@ TENANT_MODE = "corporate-franchise"
 BRAND_NAME = "ACE Host"
 ASSISTANT_NAME = "ACE AI"
 PUBLIC_BASE_URL = "https://ace-sms-worker.cryptocapitalgroupfl.workers.dev"
+ACE_SMS_WEBHOOK_URL = "https://ace-voice-worker.cryptocapitalgroupfl.workers.dev/twilio/sms"
+BUDDY_SMS_WEBHOOK_URL = "https://blackhole-voice-worker.cryptocapitalgroupfl.workers.dev/twilio/sms"
 
 [observability]
 enabled = true
