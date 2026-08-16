@@ -64,6 +64,37 @@ async function persistContact(env,contact,patch={}){
   return next;
 }
 
+async function recentConversation(env,contactId,limit=16){
+  if(!env.DB||!contactId)return[];
+  try{
+    const result=await env.DB.prepare(`
+      SELECT role, text, event_type, call_sid, created_at
+      FROM buddy_communication_events
+      WHERE contact_id = ?
+        AND text IS NOT NULL
+        AND text <> ''
+        AND role IN ('customer', 'buddy')
+      ORDER BY created_at DESC
+      LIMIT 80
+    `).bind(String(contactId)).all();
+    const rows=[...(result.results||[])].reverse();
+    const turns=[];
+    for(const row of rows){
+      const type=String(row.event_type||"");
+      if(row.role==="buddy"&&(type==="buddy.sales.discovery"||type==="buddy.turn.completed"||type==="buddy.sales.followup-requested"))continue;
+      const turn={role:row.role==="buddy"?"assistant":"user",content:String(row.text||"").trim(),at:Number(row.created_at||0),callSid:String(row.call_sid||"")};
+      if(!turn.content)continue;
+      const prior=turns[turns.length-1];
+      if(prior&&prior.role===turn.role&&prior.content===turn.content)continue;
+      turns.push(turn);
+    }
+    return turns.slice(-Math.min(Math.max(Number(limit)||16,1),24));
+  }catch(error){
+    console.warn("Conversation context lookup unavailable",{contactId,error:error?.message||String(error)});
+    return[];
+  }
+}
+
 function zonedParts(date,timeZone){const parts=new Intl.DateTimeFormat("en-US",{timeZone,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"}).formatToParts(date);const out={};for(const p of parts)if(p.type!=="literal")out[p.type]=p.value;return{year:+out.year,month:+out.month,day:+out.day,hour:+out.hour,minute:+out.minute,second:+out.second};}
 function timezoneOffsetMinutes(date,tz){const p=zonedParts(date,tz);return Math.round((Date.UTC(p.year,p.month-1,p.day,p.hour,p.minute,p.second)-date.getTime())/60000);}
 function localDateTimeToIso({year,month,day,hour,minute=0},tz){const guess=Date.UTC(year,month-1,day,hour,minute,0);let date=new Date(guess);const first=timezoneOffsetMinutes(date,tz);date=new Date(guess-first*60000);const second=timezoneOffsetMinutes(date,tz);if(second!==first)date=new Date(guess-second*60000);return date.toISOString();}
@@ -161,7 +192,7 @@ export default { async fetch(request,env,ctx){
     const contactId=decodeURIComponent(url.pathname.slice("/docusign/document/".length));const contact=await getSmsContactById(env,contactId).catch(()=>null);if(!contact?.docusignEnvelopeId)return new Response("Signed document not found.",{status:404});
     try{const tenant=tenantContext(env,{contact}),key=`tenants/${tenant.tenantId}/documents/${encodeURIComponent(contactId)}/${encodeURIComponent(contact.docusignEnvelopeId)}.pdf`;let pdf;const cached=env.DOCUMENT_ARCHIVE?await env.DOCUMENT_ARCHIVE.get(key):null;if(cached){pdf=await cached.arrayBuffer();}else{pdf=await fetchSignedEnvelopePdf(env,contact.docusignEnvelopeId);if(env.DOCUMENT_ARCHIVE)await env.DOCUMENT_ARCHIVE.put(key,pdf,{httpMetadata:{contentType:"application/pdf"},customMetadata:{tenantId:tenant.tenantId,corporateId:tenant.corporateId,contactId}});}const name=`${brandName(env)}-Agreement-${contact.firstName||"customer"}-${contact.lastName||""}.pdf`.replace(/[^A-Za-z0-9._-]+/g,"-");return new Response(pdf,{status:200,headers:{"Content-Type":"application/pdf","Content-Disposition":`inline; filename=\"${name}\"`,"Cache-Control":"private, no-store"}});}catch(e){return new Response(e.message||"Unable to load signed document",{status:502});}
   }
-  if(url.pathname==="/internal/contact-status"&&request.method==="POST"){const auth=await authorizeInternal(request,env);if(!auth.ok)return auth.response;const p=await request.json().catch(()=>({}));const contact=await getSmsContactById(env,p.contactId||"").catch(()=>null)||await getDashboardContact(env,p.contactId||"").catch(()=>null);if(!contact)return Response.json({ok:false,error:"Contact not found"},{status:404});return Response.json({ok:true,contactId:contact.id||p.contactId,documentStatus:contact.documentStatus||"Not sent",selectedProduct:contact.selectedProduct||"",docusignEnvelopeId:contact.docusignEnvelopeId||"",deliveryStatus:contact.deliveryStatus||"Not scheduled",deliveryAt:contact.deliveryAt||"",calendarEventId:contact.calendarEventId||""});}
+  if(url.pathname==="/internal/contact-status"&&request.method==="POST"){const auth=await authorizeInternal(request,env);if(!auth.ok)return auth.response;const p=await request.json().catch(()=>({}));const contact=await getSmsContactById(env,p.contactId||"").catch(()=>null)||await getDashboardContact(env,p.contactId||"").catch(()=>null);if(!contact)return Response.json({ok:false,error:"Contact not found"},{status:404});const conversation=await recentConversation(env,contact.id||p.contactId,Number(p.conversationLimit||16));return Response.json({ok:true,contactId:contact.id||p.contactId,documentStatus:contact.documentStatus||"Not sent",selectedProduct:contact.selectedProduct||"",docusignEnvelopeId:contact.docusignEnvelopeId||"",deliveryStatus:contact.deliveryStatus||"Not scheduled",deliveryAt:contact.deliveryAt||"",calendarEventId:contact.calendarEventId||"",estimateStatus:contact.estimateStatus||"",estimateNumber:contact.estimateNumber||"",estimateSentAt:contact.estimateSentAt||"",requirementsSummary:contact.requirementsSummary||"",salesHandoffStatus:contact.salesHandoffStatus||"",recentConversation:conversation});}
   if(url.pathname==="/internal/delivery-options"&&request.method==="POST"){const auth=await authorizeInternal(request,env);if(!auth.ok)return auth.response;try{const p=await request.json().catch(()=>({}));const contact=await resolveContact(env,p.contactId||"",p);if(!contact?.id)return Response.json({ok:false,error:"Contact not found"},{status:404});if(String(contact.documentStatus||"").toLowerCase()!=="signed")return Response.json({ok:false,error:"Agreement must be signed before implementation scheduling"},{status:409});return Response.json({ok:true,contactId:contact.id,selectedProduct:contact.selectedProduct||"",...(await buildDeliveryOptions(env))});}catch(e){return Response.json({ok:false,error:e.message,googleCalendarConfigured:googleCalendarConfigured(env)},{status:502});}}
   if(url.pathname==="/internal/delivery-schedule"&&request.method==="POST"){const auth=await authorizeInternal(request,env);if(!auth.ok)return auth.response;try{const result=await scheduleDelivery(env,await request.json().catch(()=>({})));return Response.json(result,{status:result.ok?200:result.conflict?409:400});}catch(e){return Response.json({ok:false,error:e.message,googleCalendarConfigured:googleCalendarConfigured(env)},{status:502});}}
   if(url.pathname==="/internal/leads"&&request.method==="POST"){const auth=await authorizeInternal(request,env);if(!auth.ok)return auth.response;const payload=await request.json(),method=preferredMethod(payload),contact=payload.contact||{},results={};if(contact.phone&&contact.id){try{results.smsSession={ok:await rememberSmsContact(env,contact)};}catch(e){results.smsSession={ok:false,error:e.message};}}results.email=contact.email?await callBinding(env.EMAIL,"https://email.internal/internal/send",payload):{ok:false,skipped:true};if(!smsConsentGranted(payload))results.sms={ok:false,skipped:true,reason:"SMS consent not granted"};else if(contact.phone){const assistant=assistantName(env),brand=brandName(env),message=method==="Phone"?`Hi ${contact.firstName||"there"}, I'm ${assistant}, the ${brand} AI assistant. I received your request${contact.interest?` about ${contact.interest}`:""}. I'll call you in about 15 seconds. Reply STOP to opt out.`:`Hi ${contact.firstName||"there"}, I'm ${assistant}, the ${brand} AI assistant. I received your request${contact.interest?` about ${contact.interest}`:""}. Would you like me to call you? Reply YES or CALL and I'll ring you. Reply STOP to opt out.`;results.sms=await callBinding(env.SMS,"https://sms.internal/internal/send",{...payload,messageType:method==="Phone"?"buddy-precall":"buddy-welcome",message});}else results.sms={ok:false,skipped:true};const contactFlow=method==="Phone"?"sms-then-call":method==="Text"?"sms-awaiting-call-reply":"email";if(method==="Phone"&&contact.phone){const delayed=(async()=>{await sleep(15000);try{await requestBuddyCall(env,contact,{type:"lead-form",preferredContactMethod:"Phone",delaySeconds:15});}catch(e){await updateDashboardContact(env,contact.id,{callStatus:"Call failed"});}})();if(ctx?.waitUntil)ctx.waitUntil(delayed);}await emit(env,{type:"lead.created",contactId:payload.contactId||contact.id||"",payload});return Response.json({ok:true,preferredContactMethod:method,contactFlow,results});}

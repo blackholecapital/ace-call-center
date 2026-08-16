@@ -149,7 +149,7 @@ function buildRealtimeTwiml(env, context) {
     ["contactId", context.contactId], ["firstName", context.firstName], ["lastName", context.lastName],
     ["email", context.email], ["phone", context.phone], ["interest", context.interest], ["location", context.location],
     ["comments", context.comments], ["leadScore", context.leadScore], ["preferredContactTime", context.preferredContactTime],
-    ["tenantId", context.tenantId], ["corporateId", context.corporateId], ["locationId", context.locationId],
+    ["triggerType", context.triggerType], ["tenantId", context.tenantId], ["corporateId", context.corporateId], ["locationId", context.locationId],
   ];
   const customParameters = params
     .filter(([, value]) => value !== undefined && value !== null && String(value) !== "")
@@ -208,7 +208,8 @@ export default {
       const authToken = env.TWILIO_AUTH_TOKEN;
       const fromNumber = env.TWILIO_PHONE_NUMBER;
       if (!accountSid || !authToken || !fromNumber) return json({ ok:false, error:"Twilio secrets are not configured" }, 500);
-      const context = { contactId, firstName, lastName, email, phone, interest, location, comments, leadScore, preferredContactTime, ...tenantContext(env, payload) };
+      const triggerType = String(payload.trigger?.type || ctxIn.triggerType || "");
+      const context = { contactId, firstName, lastName, email, phone, interest, location, comments, leadScore, preferredContactTime, triggerType, ...tenantContext(env, payload) };
       const realtimeTwiml = buildRealtimeTwiml(env, context);
       const twiml = realtimeTwiml || buildFallbackTwiml(env, context);
       const mode = realtimeTwiml ? "media-stream" : "fallback-say";
