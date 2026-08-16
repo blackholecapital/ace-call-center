@@ -1,7 +1,16 @@
+import { inboundSmsTarget, twilioFormSignature, validateTwilioFormRequest } from "./inbound.js";
+
 function json(data, status = 200) {
   return new Response(JSON.stringify(data, null, 2), {
     status,
     headers: { "content-type": "application/json; charset=utf-8" },
+  });
+}
+
+function xml(body = "<Response></Response>", status = 200) {
+  return new Response(body, {
+    status,
+    headers:{ "content-type":"text/xml; charset=utf-8", "cache-control":"no-store" },
   });
 }
 
@@ -105,18 +114,65 @@ async function sendSms(env, payload = {}) {
   return json({ ok:true, provider:"twilio", messageSid:result.sid || "", status:result.status || "queued", from:maskPhone(from), to:maskPhone(to), messageType });
 }
 
+async function routeInboundSms(env, body = {}) {
+  const authToken = String(env.TWILIO_AUTH_TOKEN || "");
+  const target = inboundSmsTarget(env, body);
+  if (!target.url) throw new Error(`${target.pipeline.toUpperCase()} inbound SMS webhook is not configured`);
+
+  const signature = await twilioFormSignature(target.url, body, authToken);
+  const response = await fetch(target.url, {
+    method:"POST",
+    headers:{
+      "content-type":"application/x-www-form-urlencoded",
+      "x-twilio-signature":signature,
+    },
+    body:new URLSearchParams(body).toString(),
+  });
+  const responseText = await response.text();
+  console.log("Inbound SMS routed", {
+    pipeline:target.pipeline,
+    from:maskPhone(body.From || ""),
+    messageSid:body.MessageSid || "",
+    status:response.status,
+  });
+  await emit(env, {
+    type:"sms.reply.routed",
+    from:maskPhone(body.From || ""),
+    messageSid:body.MessageSid || "",
+    messageType:`${target.pipeline}-sms-reply`,
+    pipeline:target.pipeline,
+  });
+  if (!response.ok) throw new Error(`${target.pipeline} SMS webhook rejected the reply (${response.status}): ${responseText.slice(0, 180)}`);
+  return { pipeline:target.pipeline, status:response.status };
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
     if (url.pathname === "/" || url.pathname === "/api/health") {
       const from = normalizePhone(env.TWILIO_PHONE_NUMBER || "");
-      return json({ ok:true, service:env.TENANT_ID === "ace-host" ? "ace-sms-worker" : "blackhole-sms-worker", provider:"twilio", health:"online", tenant:tenantContext(env), configured:Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER), fromNumberMasked:maskPhone(from), fromLast4:from.slice(-4) });
+      return json({ ok:true, service:env.TENANT_ID === "ace-host" ? "ace-sms-worker" : "blackhole-sms-worker", provider:"twilio", health:"online", tenant:tenantContext(env), configured:Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER), inboundRouterConfigured:Boolean(env.ACE_SMS_WEBHOOK_URL && env.BUDDY_SMS_WEBHOOK_URL), inboundWebhook:`${String(env.PUBLIC_BASE_URL || "").replace(/\/$/, "")}/twilio/sms`, fromNumberMasked:maskPhone(from), fromLast4:from.slice(-4) });
     }
 
     if (url.pathname === "/internal/send" && request.method === "POST") {
       const payload = await request.json().catch(() => ({}));
       return sendSms(env, payload);
+    }
+
+    if ((url.pathname === "/twilio/sms" || url.pathname === "/twilio/incoming") && request.method === "POST") {
+      const body = await parseRequestBody(request);
+      if (!(await validateTwilioFormRequest(request, body, String(env.TWILIO_AUTH_TOKEN || "")))) {
+        console.warn("Inbound SMS signature rejected", { path:url.pathname, from:maskPhone(body.From || "") });
+        return xml("<Response></Response>", 403);
+      }
+      try {
+        await routeInboundSms(env, body);
+        return xml();
+      } catch (error) {
+        console.error("Inbound SMS routing failed", { from:maskPhone(body.From || ""), error:error?.message || String(error) });
+        return xml("<Response></Response>", 502);
+      }
     }
 
     if (url.pathname === "/twilio/status" && request.method === "POST") {
