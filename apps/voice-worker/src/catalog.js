@@ -37,34 +37,61 @@ export const BUDDY_DEMO_CATALOG = {
   ],
 };
 
-export const ACE_PRELIMINARY_ESTIMATES = {
-  "rdu-quarter-rack": {
-    id: "rdu-quarter-rack",
-    subject: "RDU Data Center Colocation and Server Transfer",
-    facilityCode: "RDU",
-    facilityName: "Raleigh, North Carolina",
-    serviceName: "Quarter Rack Colocation",
-    monthlyTotal: 399,
-    currency: "USD",
-    creditCardFeePercent: 3.5,
-    termMonths: 12,
-    validityDays: 30,
-    promotion: "Setup fee waived and one month free on a 12-month term",
-    lineItems: [
-      { quantity: 1, description: "1/4 Rack 208V/30A A/B Power", unitPrice: 399, total: 399 },
-      { quantity: 1, description: "IPv4 Subnet /29 (5 Usable)", unitPrice: 0, total: 0 },
-      { quantity: 1, description: "1GB Dedicated Port / 1GB Unmetered Link", unitPrice: 0, total: 0 },
-      { quantity: 1, description: "Setup Fee Waived - 1 Month Free on 12 Month Term", unitPrice: 0, total: 0 },
-    ],
-  },
+const RACK_PLANS = {
+  quarter: { id:"quarter-rack", serviceName:"Quarter Rack Colocation", description:"1/4 Rack 208V/30A A/B Power", monthlyTotal:399 },
+  half: { id:"half-rack", serviceName:"Half Rack Colocation", description:"1/2 Rack 208V/30A A/B Power", monthlyTotal:799 },
+  full: { id:"full-rack", serviceName:"Full Rack Colocation", description:"Full Rack 208V/30A A/B Power", monthlyTotal:1499 },
 };
 
+const FACILITIES = {
+  rdu: { facilityCode:"RDU", facilityName:"Raleigh, North Carolina" },
+  tpa: { facilityCode:"TPA", facilityName:"Tampa, Florida" },
+};
+
+function buildRackEstimate(size, facility) {
+  const plan=RACK_PLANS[size], site=FACILITIES[facility];
+  return {
+    id:`${facility}-${plan.id}`,
+    subject:`${site.facilityCode} Data Center Colocation Estimate`,
+    ...site,
+    serviceName:plan.serviceName,
+    monthlyTotal:plan.monthlyTotal,
+    currency:"USD",
+    creditCardFeePercent:3.5,
+    termMonths:12,
+    validityDays:30,
+    demoSample:true,
+    setupFeeStandard:199,
+    setupFeeDue:0,
+    promotion:"$199 one-time setup fee waived for AI Concierge customers",
+    lineItems:[
+      { quantity:1, description:plan.description, unitPrice:plan.monthlyTotal, total:plan.monthlyTotal },
+      { quantity:1, description:"IPv4 Subnet /29 (5 Usable)", unitPrice:0, total:0 },
+      { quantity:1, description:"1GB Dedicated Port / 1GB Unmetered Link", unitPrice:0, total:0 },
+      { quantity:1, description:"One-Time Setup Fee — Waived for AI Concierge Customers", unitPrice:199, discount:199, total:0 },
+    ],
+  };
+}
+
+export const ACE_PRELIMINARY_ESTIMATES = Object.fromEntries(
+  Object.keys(FACILITIES).flatMap(facility => Object.keys(RACK_PLANS).map(size => [
+    `${facility}-${size}-rack`, buildRackEstimate(size, facility),
+  ])),
+);
+
 export function getAcePreliminaryEstimate({ interest = "", location = "", conversation = "" } = {}) {
-  const text = `${interest} ${location} ${conversation}`.toLowerCase();
-  const rdu = /\b(rdu|raleigh|durham|north carolina)\b/.test(text);
-  const quarterRackFit = /\b(quarter rack|1\/4 rack|three 4u|3 4u|three four u|three four-u)\b/.test(text);
-  if (rdu && quarterRackFit) return JSON.parse(JSON.stringify(ACE_PRELIMINARY_ESTIMATES["rdu-quarter-rack"]));
-  return null;
+  const allText = `${interest} ${location} ${conversation}`.toLowerCase();
+  const conversationText=String(conversation||"").toLowerCase();
+  const facility=/\b(rdu|raleigh|durham|north carolina)\b/.test(allText)?"rdu":/\b(tpa|tampa|florida)\b/.test(allText)?"tpa":"tpa";
+  let size="";
+  if(/\b(quarter rack|1\/4 rack|three 4u|3 4u|three four u|three four-u)\b/.test(conversationText))size="quarter";
+  else if(/\b(half rack|1\/2 rack)\b/.test(conversationText))size="half";
+  else if(/\b(full rack|whole rack|full cabinet)\b/.test(conversationText))size="full";
+  else if(/\b(quarter rack|1\/4 rack)\b/.test(allText))size="quarter";
+  else if(/\b(half rack|1\/2 rack)\b/.test(allText))size="half";
+  else if(/\b(full rack|whole rack|full cabinet)\b/.test(allText))size="full";
+  if(!size)return null;
+  return JSON.parse(JSON.stringify(ACE_PRELIMINARY_ESTIMATES[`${facility}-${size}-rack`]));
 }
 
 export function getBuddyDemoOptions(interest = "") {

@@ -3,6 +3,7 @@
 let _campaignFilter = "all";
 let _campaignSearch = "";
 let _campaignSort = "date";
+const contactMoney = (value=0) => new Intl.NumberFormat("en-US", {style:"currency", currency:"USD", maximumFractionDigits:0}).format(Number(value||0));
 
 /* ======================== DASHBOARD ======================== */
 function renderDashboard() {
@@ -63,7 +64,7 @@ function renderContacts() {
       <div style="margin-bottom:var(--sp-2)">
         <input class="input" id="contact-search-input" value="${esc(getContactSearch())}" placeholder="Filter by name, phone, or email\u2026" style="max-width:280px;padding:4px var(--sp-2);font-size:12px" />
       </div>
-      ${filtered.length ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Channel</th><th>Status</th><th style="width:1%"></th></tr></thead>
+      ${filtered.length ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Interest</th><th>Pipeline</th><th>Estimate / Handoff</th><th>Contact</th><th style="width:1%"></th></tr></thead>
         <tbody id="contacts-tbody">${contactsRows(filtered)}</tbody></table></div>` : ''}
       ${!filtered.length ? `<div class="empty-state"><div class="empty-state-icon">\u263A</div><div class="empty-state-title">No contacts${q?" match":""}</div><div class="empty-state-text">${q?"Try a different search":"Add your first contact to get started"}</div>
         ${!q?'<button class="btn btn-primary btn-sm" data-action="open-contact-modal">+ New Contact</button>':""}</div>` : ""}
@@ -80,15 +81,49 @@ function filterContacts(q) {
 function contactsRows(list) {
   return (list||state.contacts).map(c=>`<tr>
     <td class="table-bold"><span class="avatar-dot">${esc(contactName(c).slice(0,2).toUpperCase())}</span>${esc(contactName(c))}</td>
-    <td class="table-meta">${esc(c.phone||"\u2014")}</td><td class="table-meta truncate">${esc(c.email||"\u2014")}</td>
-    <td><span class="badge badge-info channel-chip">${esc((c.channelPreference||"sms").toUpperCase())}</span></td>
-    <td>${c.optedOut?'<span class="badge badge-danger">Opted Out</span>':'<span class="badge badge-success">Active</span>'}</td>
+    <td><strong>${esc(c.interest||c.selectedProduct||"General inquiry")}</strong><div class="table-meta">${esc(c.location||"Location not set")}</div></td>
+    <td><span class="badge badge-info">${esc(c.stage||"New Lead")}</span><div class="table-meta" style="margin-top:4px">${esc(c.callStatus||"Not called")}</div></td>
+    <td>${c.estimateNumber?`<span class="badge badge-success">${esc(c.estimateNumber)}</span><div class="table-meta" style="margin-top:4px">${esc(c.estimatedMonthlyTotal?contactMoney(c.estimatedMonthlyTotal):"Sent")}/mo</div>`:c.salesHandoffStatus?`<span class="badge badge-danger">Sales ${esc(c.salesHandoffStatus)}</span>`:'<span class="badge badge-muted">Pending</span>'}</td>
+    <td><div class="table-meta">${esc(c.phone||"\u2014")}</div><div class="table-meta truncate">${esc(c.email||"\u2014")}</div></td>
     <td>${rowActionMenu([
+      {action:"view-ai-workflow", label:"View AI workflow", data:{id:c.id}},
       {action:"edit-contact", label:"Edit", data:{id:c.id}},
       {action:"toggle-optout", label:c.optedOut?"Opt In":"Opt Out", data:{id:c.id, opt:c.optedOut?"in":"out"}},
       {divider:true},
       {action:"delete-contact", label:"Delete", data:{id:c.id, name:contactName(c)}, danger:true}
     ])}</td></tr>`).join("");
+}
+
+function estimateSummary(c={}) {
+  const q=c.estimateQuote||{};
+  const lines=Array.isArray(q.lineItems)?q.lineItems:[];
+  if(!c.estimateNumber&&!lines.length)return '<div class="table-meta">No estimate has been sent.</div>';
+  return `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px">
+    <div><div class="form-label">Estimate</div><strong>${esc(c.estimateNumber||"Prepared")}</strong></div>
+    <div><div class="form-label">Service</div><strong>${esc(q.serviceName||c.selectedProduct||c.interest||"\u2014")}</strong></div>
+    <div><div class="form-label">Monthly</div><strong>${esc(contactMoney(q.monthlyTotal||c.estimatedMonthlyTotal||0))}</strong></div>
+  </div>${lines.length?`<div class="table-wrap"><table><thead><tr><th>Qty</th><th>Line item</th><th>Total</th></tr></thead><tbody>${lines.map(line=>`<tr><td>${esc(line.quantity||1)}</td><td>${esc(line.description||"")}</td><td>${esc(contactMoney(line.total||0))}</td></tr>`).join("")}</tbody></table></div>`:""}`;
+}
+
+async function openAiWorkflow(id) {
+  const contact=state.contacts.find(c=>c.id===id)||{};
+  openModal(`AI workflow — ${esc(contactName(contact))}`, '<div class="loading-text">Loading transcript and workflow events…</div>', {wide:true});
+  const result=await api(`/api/buddy-events?contactId=${encodeURIComponent(id)}&limit=500`);
+  const conversations=result?.data?.conversations||[];
+  const events=result?.data?.events||[];
+  const latest=conversations[0];
+  const workflow=events.filter(event=>/^(estimate\.|sales\.handoff\.|buddy\.estimate\.|email\.)/.test(event.type)).slice(0,20);
+  const body=document.getElementById("modal-body");if(!body)return;
+  body.innerHTML=`
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:18px">
+      <div><div class="form-label">Pipeline</div><strong>${esc(contact.stage||"New Lead")}</strong></div>
+      <div><div class="form-label">Sales handoff</div><strong>${esc(contact.salesHandoffStatus||"None")}</strong></div>
+      <div><div class="form-label">Last call</div><strong>${esc(contact.callStatus||"Not called")}</strong></div>
+    </div>
+    <div class="card" style="margin-bottom:16px"><div class="card-header"><h3>Requirements captured</h3></div><div style="line-height:1.55">${esc(contact.requirementsSummary||contact.comments||"No requirements summary saved yet.")}</div>${contact.salesHandoffReason?`<div class="banner banner-info" style="margin-top:12px"><strong>Handoff reason:</strong> ${esc(contact.salesHandoffReason)}</div>`:""}</div>
+    <div class="card" style="margin-bottom:16px"><div class="card-header"><h3>Estimate</h3></div>${estimateSummary(contact)}</div>
+    <div class="card" style="margin-bottom:16px"><div class="card-header"><h3>Latest call transcript</h3></div>${latest?.transcript?.length?latest.transcript.map(turn=>`<div style="padding:9px 0;border-bottom:1px solid var(--c-border)"><strong>${turn.role==="buddy"?"Alley":"Customer"}:</strong> ${esc(turn.text)}</div>`).join(""):'<div class="table-meta">No transcript is available.</div>'}</div>
+    <div class="card"><div class="card-header"><h3>Estimate and handoff activity</h3></div>${workflow.length?workflow.map(event=>`<div style="padding:9px 0;border-bottom:1px solid var(--c-border)"><span class="badge badge-info">${esc(event.type)}</span> <span class="table-meta">${fmtDate(event.createdAt)}</span><div style="margin-top:4px">${esc(event.text||event.payload?.message||event.payload?.error||"")}</div></div>`).join(""):'<div class="table-meta">No estimate or handoff events yet.</div>'}</div>`;
 }
 
 function bindContactSearch() {
@@ -185,6 +220,7 @@ async function deleteContact(id) { await api("/api/contacts/"+id,"DELETE"); toas
 registerActions({
   "open-contact-modal": () => openContactModal(),
   "edit-contact": (el) => openContactModal(state.contacts.find(c=>c.id===el.dataset.id)),
+  "view-ai-workflow": (el) => openAiWorkflow(el.dataset.id),
   "open-import-modal": () => openImportModal(),
   "toggle-optout": (el) => toggleOptOut(el.dataset.id, el.dataset.opt),
   "delete-contact": (el) => confirmAction("Delete "+el.dataset.name+"? This cannot be undone.", ()=>deleteContact(el.dataset.id), {destructive:true, confirmLabel:"Delete"}),
