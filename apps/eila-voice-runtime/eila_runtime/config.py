@@ -56,6 +56,10 @@ class Settings:
     tts_sample_rate: int = _integer("EILA_TTS_SAMPLE_RATE", 24000)
     tts_exaggeration: float = _floating("EILA_TTS_EXAGGERATION", 0.0)
     tts_cfg_weight: float = _floating("EILA_TTS_CFG_WEIGHT", 0.0)
+    tts_preface_texts: str = os.getenv(
+        "EILA_TTS_PREFACE_TEXTS",
+        "Got it.|Absolutely.|Glad to hear it.|I'm doing great, thank you.",
+    )
 
     telephony_sample_rate: int = _integer("EILA_TELEPHONY_SAMPLE_RATE", 8000)
     audio_chunk_ms: int = _integer("EILA_AUDIO_CHUNK_MS", 100)
