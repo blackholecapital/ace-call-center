@@ -29,6 +29,7 @@ const conversationsHandler = require("./functions/api/conversations");
 const reconciliation = require("./functions/api/reconciliation");
 const buddyEvents = require("./functions/api/buddy-events");
 const manualAgreement = require("./functions/api/manual-agreement");
+const appointments = require("./functions/api/appointments");
 
 function routeRequest(pathname, method, query = {}, headers = {}) {
   const parts = pathname.split("/").filter(Boolean);
@@ -47,6 +48,7 @@ function routeRequest(pathname, method, query = {}, headers = {}) {
   if (pathname === "/api/leads") return { fn: leads, params:{} };
   if (pathname === "/api/calls") return { fn: calls, params:{} };
   if (pathname === "/api/manual-agreement") return { fn: manualAgreement, params:{} };
+  if (pathname === "/api/appointments") return { fn: appointments, params:{} };
   if (pathname === "/api/call-now") return { fn: callNow, params:{ id:query.id || "", sig:query.sig || "" } };
 
   if (pathname === "/api/contacts") return { fn: contacts, params: {} };

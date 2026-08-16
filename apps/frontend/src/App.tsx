@@ -6,6 +6,7 @@ import {
   Network, Phone, Search, Server, ShieldCheck, Sparkles, Users, Zap
 } from "lucide-react";
 import "./App.css";
+import "./Appointments.css";
 
 type Stage = "New Inquiry" | "Qualified" | "Site Review" | "Proposal Sent" | "Contracting" | "Provisioning" | "Live Account";
 type EstimateLineItem = { quantity?:number; description?:string; unitPrice?:number; total?:number };
@@ -22,11 +23,14 @@ type Lead = {
   deliveryAt?:string; deliveryEnd?:string; deliveryStatus?:string; calendarEventId?:string; calendarEventUrl?:string; value?:number;
   estimateStatus?:string; estimateNumber?:string; estimateSentAt?:string; estimateValidUntil?:string; estimatedMonthlyTotal?:number;
   requirementsSummary?:string|string[]; estimateQuote?:EstimateQuote;
+  initialLeadScore?:number; leadScoreBreakdown?:{key:string;label:string;points:number}[];
+  appointmentStatus?:string; appointmentStart?:string; appointmentEnd?:string; appointmentTimeZone?:string;
+  appointmentNotes?:string; appointmentRequestedAt?:string; appointmentUpdatedAt?:string; appointmentNotificationStatus?:string;
 };
 type AceEvent = { id:number|string; contactId?:string; callSid?:string; type:string; role?:string; text?:string; createdAt:number; payload?:any };
 type DocumentArtifact = { id:string; kind:"estimate"|"agreement"; title:string; status:string; sentAt?:string; event?:AceEvent };
 type Conversation = { callSid?:string; contactId?:string; startedAt:number; endedAt:number; transcript:{role:string;text:string;at:number;type?:string}[]; events:AceEvent[] };
-type Tab = "Pipeline" | "Leads" | "Contracts" | "Installations";
+type Tab = "Pipeline" | "Leads" | "Contracts" | "Installations" | "Appointments";
 type View = "Operations" | "Accounts" | "Conversations" | "Analytics";
 type LeadAction = "email" | "call" | "sms" | "document" | "calendar";
 
@@ -51,10 +55,17 @@ function zonedParts(value:any){
 function formatEtTime(iso?:string){return iso?new Intl.DateTimeFormat("en-US",{timeZone:ACE_TZ,hour:"numeric",minute:"2-digit"}).format(new Date(iso)):"";}
 function formatEtDateTime(iso?:string){return iso?new Intl.DateTimeFormat("en-US",{timeZone:ACE_TZ,weekday:"short",month:"short",day:"numeric",hour:"numeric",minute:"2-digit",timeZoneName:"short"}).format(new Date(iso)):"";}
 function formatEtMonthDay(iso?:string){return iso?new Intl.DateTimeFormat("en-US",{timeZone:ACE_TZ,month:"short",day:"numeric"}).format(new Date(iso)):"";}
+function etInputValue(iso?:string){if(!iso)return"";const p=zonedParts(iso);return `${p.year}-${String(p.month).padStart(2,"0")}-${String(p.day).padStart(2,"0")}T${String(p.hour).padStart(2,"0")}:${String(p.minute).padStart(2,"0")}`;}
+function etInputToIso(value:string){
+  const match=/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);if(!match)throw new Error("Choose a valid appointment date and time.");
+  const [,ys,ms,ds,hs,mins]=match,guess=Date.UTC(+ys,+ms-1,+ds,+hs,+mins);let date=new Date(guess);
+  for(let attempt=0;attempt<2;attempt+=1){const p=zonedParts(date),asUtc=Date.UTC(p.year,p.month-1,p.day,p.hour,p.minute);date=new Date(guess-(asUtc-date.getTime()));}
+  return date.toISOString();
+}
 async function postJson(path:string,body:any){const r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const data=await r.json().catch(()=>({}));if(!r.ok||data?.ok===false)throw new Error(data?.error||`Request failed (${r.status})`);return data;}
 
 function isWorkflowEvent(event:AceEvent){
-  return /^(lead\.created|email\.(sent|failed)|sms\.(sent|failed)|call\.(requested|created|initiated|ringing|answered|in-progress|completed|failed)|estimate\.(sent|failed)|sales\.handoff\.|docusign\.|delivery\.|buddy\.estimate\.)/i.test(event.type);
+  return /^(lead\.created|email\.(sent|failed)|sms\.(sent|failed)|call\.(requested|created|initiated|ringing|answered|in-progress|completed|failed)|estimate\.(sent|failed)|sales\.(handoff|appointment)\.|docusign\.|delivery\.|buddy\.estimate\.)/i.test(event.type);
 }
 function workflowTitle(event:AceEvent){
   const type=event.type.toLowerCase(),p=event.payload||{};
@@ -63,6 +74,9 @@ function workflowTitle(event:AceEvent){
   if(type==="estimate.sent")return "Estimate created and sent";
   if(type==="estimate.failed"||type==="buddy.estimate.failed")return "Estimate workflow failed";
   if(type==="sales.handoff.created")return "Sales-team handoff created";
+  if(type==="sales.appointment.requested")return "Sales appointment requested";
+  if(type==="sales.appointment.approved")return "Sales appointment approved";
+  if(type==="sales.appointment.rescheduled")return "Sales appointment rescheduled";
   if(type==="docusign.sent")return "Contract sent for signature";
   if(type.includes("docusign")&&/signed|completed/.test(type))return "Contract signed";
   if(type==="delivery.scheduled")return "Provisioning scheduled";
@@ -78,7 +92,7 @@ function workflowDescription(event:AceEvent){
   if(event.type==="email.sent")return p.subject||`Sent to ${p.to||"customer"}`;
   if(event.type==="estimate.sent")return [p.estimateNumber,p.productName,p.monthlyTotal?Number(p.monthlyTotal).toLocaleString("en-US",{style:"currency",currency:"USD"})+"/month":""].filter(Boolean).join(" · ");
   if(event.type.startsWith("call."))return p.status?`Status: ${p.status}`:(event.callSid||"Voice workflow update");
-  return event.text||p.message||p.reason||p.productName||p.deliveryAt||"Workflow event recorded";
+  return event.text||p.message||p.reason||p.productName||p.label||p.appointmentStart||p.deliveryAt||"Workflow event recorded";
 }
 function latestWorkflowEvent(events:AceEvent[]){return [...events].filter(isWorkflowEvent).sort((a,b)=>b.createdAt-a.createdAt)[0];}
 function workflowDetails(event:AceEvent){
@@ -87,6 +101,7 @@ function workflowDetails(event:AceEvent){
   add("Recipient",p.to);add("Subject",p.subject);add("Email type",p.messageType);add("Provider",p.provider);add("Provider message ID",p.messageId);
   add("Estimate",p.estimateNumber);add("Service",p.productName);add("Monthly total",p.monthlyTotal?Number(p.monthlyTotal).toLocaleString("en-US",{style:"currency",currency:"USD"}):"");
   add("Requirements",p.requirements);add("Reason",p.reason);add("Call SID",event.callSid||p.callSid);add("Status",p.status);add("Scheduled for",p.deliveryAt);
+  add("Appointment",p.label||p.appointmentStart);add("Appointment status",p.appointmentStatus);add("Notes",p.notes);
   add("Recorded message",event.text||p.message);return rows;
 }
 
@@ -138,6 +153,11 @@ function normalizeContact(raw:any,i:number):Lead {
     estimateSentAt:d?.estimateSentAt||d?.estimate_sent_at||"",estimateValidUntil:d?.estimateValidUntil||d?.estimate_valid_until||"",
     estimatedMonthlyTotal:Number(d?.estimatedMonthlyTotal||d?.estimated_monthly_total||0),requirementsSummary:d?.requirementsSummary||d?.requirements_summary||"",
     estimateQuote:d?.estimateQuote||d?.estimate_quote||undefined,
+    initialLeadScore:Number(d?.initialLeadScore||0),leadScoreBreakdown:Array.isArray(d?.leadScoreBreakdown)?d.leadScoreBreakdown:[],
+    appointmentStatus:d?.appointmentStatus||"",appointmentStart:d?.appointmentStart||"",appointmentEnd:d?.appointmentEnd||"",
+    appointmentTimeZone:d?.appointmentTimeZone||ACE_TZ,appointmentNotes:d?.appointmentNotes||"",
+    appointmentRequestedAt:d?.appointmentRequestedAt||"",appointmentUpdatedAt:d?.appointmentUpdatedAt||"",
+    appointmentNotificationStatus:d?.appointmentNotificationStatus||"",
   };
 }
 
@@ -146,7 +166,8 @@ export default function App(){
   const [conversations,setConversations]=useState<Conversation[]>([]),[events,setEvents]=useState<AceEvent[]>([]),[selectedCall,setSelectedCall]=useState<Conversation|null>(null);
   const [documentView,setDocumentView]=useState<{lead:Lead;document:DocumentArtifact}|null>(null);
 
-  useEffect(()=>{const load=()=>fetch("/api/contacts").then(r=>r.ok?r.json():Promise.reject()).then(payload=>{const rows=Array.isArray(payload)?payload:payload?.contacts||payload?.rows||payload?.data||[];if(Array.isArray(rows)&&rows.length){const mapped=rows.map(normalizeContact);setLeads(mapped);setSelected(current=>mapped.find((l:Lead)=>l.id===current?.id)||mapped[0]);setLive(true);}}).catch(()=>setLive(false));load();const timer=window.setInterval(load,5000);return()=>clearInterval(timer);},[]);
+  async function loadLeads(){return fetch("/api/contacts").then(r=>r.ok?r.json():Promise.reject()).then(payload=>{const rows=Array.isArray(payload)?payload:payload?.contacts||payload?.rows||payload?.data||[];if(Array.isArray(rows)&&rows.length){const mapped=rows.map(normalizeContact);setLeads(mapped);setSelected(current=>mapped.find((l:Lead)=>l.id===current?.id)||mapped[0]);setLive(true);}}).catch(()=>setLive(false));}
+  useEffect(()=>{loadLeads();const timer=window.setInterval(loadLeads,5000);return()=>clearInterval(timer);},[]);
   useEffect(()=>{const load=()=>fetch("/api/buddy-events?limit=2000").then(r=>r.ok?r.json():Promise.reject()).then(p=>{const data=p?.data||{};setConversations(data.conversations||[]);setEvents(data.events||[]);setSelectedCall(current=>current?((data.conversations||[]).find((c:Conversation)=>c.callSid===current.callSid)||current):((data.conversations||[])[0]||null));}).catch(()=>{});load();const timer=window.setInterval(load,8000);return()=>clearInterval(timer);},[]);
 
   const metrics=useMemo(()=>{const liveAccounts=leads.filter(l=>l.stage==="Live Account").length,qualified=leads.filter(l=>l.stage!=="New Inquiry").length,contracting=leads.filter(l=>["Contracting","Provisioning","Live Account"].includes(l.stage)).length,pipeline=leads.reduce((sum,l)=>sum+(l.value||0),0);return{total:leads.length,qualified,contracting,liveAccounts,pipeline};},[leads]);
@@ -171,7 +192,7 @@ export default function App(){
         const service=window.prompt("Service for the ACE Host agreement:",lead.selectedProduct||lead.interest||"");if(!service?.trim())return;
         await postJson("/api/manual-agreement",{contactId:lead.id,productName:service.trim()});window.alert("ACE Host agreement sent by text and email.");return;
       }
-      if(action==="calendar"){setView("Operations");setTab("Installations");}
+      if(action==="calendar"){setView("Operations");setTab("Appointments");}
     }catch(error:any){window.alert(error?.message||"That action failed.");}
   }
 
@@ -193,7 +214,7 @@ export default function App(){
       <header className="topbar"><div><span className="eyebrow">ACE HOST · INFRASTRUCTURE SALES</span><h1>AI Call Center</h1><p>From first inquiry to a fully provisioned account.</p></div><div className="top-actions"><div className="search"><Search size={17}/><span>Search accounts, services, calls...</span></div><div className="scope-pill"><Building2 size={13}/> Corporate · All locations</div><div className="system-pill"><span/> Systems online</div><div className="avatar">AH</div></div></header>
       <section className="kpis"><Kpi label="Open Opportunities" value={metrics.total} icon={<Users/>}/><Kpi label="Qualified" value={metrics.qualified} icon={<Gauge/>}/><Kpi label="Contracting" value={metrics.contracting} icon={<FileSignature/>}/><Kpi label="Live Accounts" value={metrics.liveAccounts} icon={<Server/>}/><Kpi label="Pipeline Value" value={metrics.pipeline.toLocaleString("en-US",{style:"currency",currency:"USD",maximumFractionDigits:0})} icon={<CircleDollarSign/>}/></section>
 
-      {view==="Operations"&&<><div className="tabbar">{(["Pipeline","Leads","Contracts","Installations"] as Tab[]).map(t=><button key={t} onClick={()=>setTab(t)} className={tab===t?"tab active":"tab"}>{t}</button>)}</div><div className="content-shell"><section className="content-main">{tab==="Pipeline"&&<Pipeline leads={leads} events={events} onSelect={setSelected} onAction={act}/>} {tab==="Leads"&&<Leads leads={leads} events={events} onSelect={setSelected} onAction={act}/>} {tab==="Contracts"&&<Contracts leads={leads} events={events} onSelect={setSelected} onView={(lead,document)=>setDocumentView({lead,document})}/>} {tab==="Installations"&&<Installations leads={leads} onSelect={setSelected}/>}</section><LeadDetail lead={selected} events={eventsFor(selected?.id)} onAction={act}/></div></>}
+      {view==="Operations"&&<><div className="tabbar">{(["Pipeline","Leads","Contracts","Installations","Appointments"] as Tab[]).map(t=><button key={t} onClick={()=>setTab(t)} className={tab===t?"tab active":"tab"}>{t}</button>)}</div><div className="content-shell"><section className="content-main">{tab==="Pipeline"&&<Pipeline leads={leads} events={events} onSelect={setSelected} onAction={act}/>} {tab==="Leads"&&<Leads leads={leads} events={events} onSelect={setSelected} onAction={act}/>} {tab==="Contracts"&&<Contracts leads={leads} events={events} onSelect={setSelected} onView={(lead,document)=>setDocumentView({lead,document})}/>} {tab==="Installations"&&<Installations leads={leads} onSelect={setSelected}/>} {tab==="Appointments"&&<Appointments leads={leads} onSelect={setSelected} onChanged={loadLeads}/>}</section><LeadDetail lead={selected} events={eventsFor(selected?.id)} onAction={act}/></div></>}
       {view==="Accounts"&&<div className="content-shell accounts-shell"><section className="content-main"><div className="table-title"><div><h2>ACE Host Accounts</h2><p>Live prospects, customers and infrastructure opportunities.</p></div></div><Leads leads={leads} events={events} onSelect={setSelected} onAction={act} compact/></section><LeadDetail lead={selected} events={eventsFor(selected?.id)} onAction={act}/></div>}
       {view==="Conversations"&&<ConversationsView conversations={conversations} selected={selectedCall} onSelect={setSelectedCall} customerFor={customerFor}/>}
       {view==="Analytics"&&<AnalyticsView events={events}/>}
@@ -228,9 +249,29 @@ function Installations({leads,onSelect}:{leads:Lead[],onSelect:(l:Lead)=>void}){
   return <div className="delivery-layout"><div className="calendar-card"><div className="table-title"><div><h2>Provisioning Calendar</h2><p>Site reviews, rack installs, migrations and AI launches · Eastern Time</p></div><button>{monthLabel}</button></div><div className="calendar-grid">{["SUN","MON","TUE","WED","THU","FRI","SAT"].map(d=><div className="dow" key={d}>{d}</div>)}{cells.map((day,i)=>{const ds=day?installs.filter(l=>{const p=zonedParts(l.deliveryAt!);return p.year===year&&p.month===month&&p.day===day;}):[];return <div className={day?"day":"day muted"} key={i}><b>{day||""}</b>{ds.map(l=><button className="delivery-pill" onClick={()=>onSelect(l)} key={l.id}>{formatEtTime(l.deliveryAt)} · {l.company||l.firstName}</button>)}</div>})}</div></div><div className="delivery-side"><h3>Upcoming deployments</h3>{installs.length?installs.map(l=><button className="delivery-row" onClick={()=>onSelect(l)} key={l.id}><div className="date-box"><b>{zonedParts(l.deliveryAt!).day}</b><span>{new Intl.DateTimeFormat("en-US",{timeZone:ACE_TZ,month:"short"}).format(new Date(l.deliveryAt!)).toUpperCase()}</span></div><div><strong>{l.company||`${l.firstName} ${l.lastName}`}</strong><span>{l.selectedProduct||l.interest}</span><small>{formatEtTime(l.deliveryAt)} ET · {l.location}</small></div></button>):<p>No deployments scheduled.</p>}</div></div>
 }
 
+function Appointments({leads,onSelect,onChanged}:{leads:Lead[],onSelect:(l:Lead)=>void,onChanged:()=>Promise<any>}){
+  const [drafts,setDrafts]=useState<Record<string,string>>({}),[busy,setBusy]=useState("");
+  const appointments=leads.filter(lead=>lead.appointmentStatus||lead.appointmentStart).sort((a,b)=>new Date(a.appointmentStart||a.appointmentRequestedAt||0).getTime()-new Date(b.appointmentStart||b.appointmentRequestedAt||0).getTime());
+  const scheduled=appointments.filter(lead=>lead.appointmentStart),anchorParts=zonedParts(scheduled[0]?.appointmentStart||new Date()),year=anchorParts.year,month=anchorParts.month;
+  const firstDow=new Date(Date.UTC(year,month-1,1)).getUTCDay(),daysInMonth=new Date(Date.UTC(year,month,0)).getUTCDate(),cells=Array.from({length:42},(_,i)=>{const day=i-firstDow+1;return day>=1&&day<=daysInMonth?day:null;});
+  const monthLabel=new Intl.DateTimeFormat("en-US",{timeZone:ACE_TZ,month:"long",year:"numeric"}).format(new Date(Date.UTC(year,month-1,15,12)));
+  async function updateAppointment(lead:Lead,action:"approve"|"reschedule"){
+    const input=drafts[lead.id]||etInputValue(lead.appointmentStart);if(!input){window.alert("Choose a date and time first.");return;}setBusy(`${lead.id}-${action}`);
+    try{
+      const result=await postJson("/api/appointments",{contactId:lead.id,action,startIso:etInputToIso(input),timeZone:ACE_TZ,notes:lead.appointmentNotes||lead.requirementsSummary||"Sales consultation requested by customer"});
+      await onChanged();
+      const notification=result?.data?.appointment?.notificationStatus;
+      const updated=action==="approve"?"Appointment approved.":"Appointment rescheduled.";
+      window.alert(notification==="Sent"?`${updated} Customer confirmation sent.`:`${updated} Customer notification status: ${notification||"not confirmed"}.`);
+    }
+    catch(error:any){window.alert(error?.message||"Appointment update failed.");}finally{setBusy("");}
+  }
+  return <div className="appointment-layout"><div className="calendar-card"><div className="table-title"><div><h2>Sales Appointments</h2><p>Customer-requested consultations · Eastern Time</p></div><button>{monthLabel}</button></div><div className="calendar-grid">{["SUN","MON","TUE","WED","THU","FRI","SAT"].map(day=><div className="dow" key={day}>{day}</div>)}{cells.map((day,index)=>{const rows=day?scheduled.filter(lead=>{const p=zonedParts(lead.appointmentStart!);return p.year===year&&p.month===month&&p.day===day;}):[];return <div className={day?"day":"day muted"} key={index}><b>{day||""}</b>{rows.map(lead=><button className="appointment-pill" onClick={()=>onSelect(lead)} key={lead.id}>{formatEtTime(lead.appointmentStart)} · {lead.company||lead.firstName}<small>{lead.appointmentStatus}</small></button>)}</div>})}</div></div><div className="appointment-queue"><div className="table-title"><div><h2>Approval Queue</h2><p>{appointments.filter(lead=>lead.appointmentStatus==="Requested").length} awaiting review</p></div></div>{appointments.length?appointments.map(lead=>{const input=drafts[lead.id]??etInputValue(lead.appointmentStart),requested=lead.appointmentStatus==="Requested";return <article className="appointment-card" key={lead.id} onClick={()=>onSelect(lead)}><div className="appointment-card-head"><div><strong>{lead.company||`${lead.firstName} ${lead.lastName}`}</strong><span>{lead.selectedProduct||lead.interest}</span></div><Status value={lead.appointmentStatus||"Requested"}/></div><p>{lead.appointmentNotes||lead.requirementsSummary||"Customer requested a sales consultation."}</p><label>Appointment time (Eastern)<input type="datetime-local" value={input} onChange={event=>setDrafts(current=>({...current,[lead.id]:event.target.value}))} onClick={event=>event.stopPropagation()}/></label><div className="appointment-meta"><span>{lead.appointmentRequestedAt?`Requested ${formatEtDateTime(lead.appointmentRequestedAt)}`:"Customer request"}</span><span>Notification: {lead.appointmentNotificationStatus||"Pending"}</span></div><div className="appointment-actions"><button disabled={Boolean(busy)} onClick={event=>{event.stopPropagation();updateAppointment(lead,"approve");}}>{busy===`${lead.id}-approve`?"Approving…":requested?"Approve time":"Confirm time"}</button><button className="secondary" disabled={Boolean(busy)} onClick={event=>{event.stopPropagation();updateAppointment(lead,"reschedule");}}>{busy===`${lead.id}-reschedule`?"Rescheduling…":"Reschedule & notify"}</button></div></article>}):<div className="empty-documents"><CalendarDays size={30}/><b>No sales appointments yet</b><span>Requests captured by Alley will appear here for approval.</span></div>}</div></div>;
+}
+
 function ConversationsView({conversations,selected,onSelect,customerFor}:{conversations:Conversation[],selected:Conversation|null,onSelect:(c:Conversation)=>void,customerFor:(id?:string)=>Lead|undefined}){return <div className="conversation-layout"><div className="table-card conversation-list"><div className="table-title"><div><h2>AI Voice Conversations</h2><p>{conversations.length} captured ACE Host calls</p></div></div>{conversations.length?conversations.map(c=>{const lead=customerFor(c.contactId);return <button key={c.callSid||`${c.contactId}-${c.startedAt}`} onClick={()=>onSelect(c)} className={selected?.callSid===c.callSid?"conversation-row active":"conversation-row"}><strong>{lead?.company||`${lead?.firstName||"Unknown"} ${lead?.lastName||"prospect"}`}</strong><span>{new Date(c.startedAt).toLocaleString()} · {c.transcript.length} turns</span>{lead?.selectedProduct&&<small>{lead.selectedProduct}</small>}</button>}):<p className="empty-copy">No captured Alley calls yet.</p>}</div><div className="table-card transcript"><div className="table-title"><div><h2>Call Transcript</h2><p>{selected?.callSid||"Select a conversation"}</p></div></div>{selected?.transcript?.length?selected.transcript.map((turn,i)=><div key={`${turn.at}-${i}`} className={turn.role==="buddy"?"turn ai":"turn prospect"}><div><b>{turn.role==="buddy"?"Alley":"Prospect"}</b><p>{turn.text}</p><small>{new Date(turn.at).toLocaleTimeString()}</small></div></div>):<p className="empty-copy">No transcript selected.</p>}</div></div>}
 function AnalyticsView({events}:{events:AceEvent[]}){const counts=events.reduce((m:any,e)=>{m[e.type]=(m[e.type]||0)+1;return m;},{});const recent=events.slice(0,50);return <div className="analytics-layout"><div className="table-card analytics-card"><div className="table-title"><div><h2>Automation Analytics</h2><p>Live operational telemetry from the ACE AI call center.</p></div></div><div className="analytics-kpis"><Kpi label="AI Calls" value={events.filter(e=>e.type==="call.created").length} icon={<Phone/>}/><Kpi label="Prospect Turns" value={counts["stt.transcript.final"]||0} icon={<MessageSquare/>}/><Kpi label="Contract Events" value={events.filter(e=>e.type.includes("docusign")).length} icon={<FileSignature/>}/><Kpi label="Deployment Events" value={events.filter(e=>e.type.includes("delivery")).length} icon={<HardDrive/>}/></div></div><div className="table-card recent-card"><div className="table-title"><div><h2>Recent Activity</h2><p>Newest calls, contracts and provisioning events.</p></div></div>{recent.map(e=><div key={e.id} className="activity-row"><span>{new Date(e.createdAt).toLocaleString()}</span><b>{e.type}</b><span>{e.contactId||"—"}</span><span>{e.text||e.payload?.productName||e.payload?.deliveryAt||e.payload?.status||"Workflow event"}</span></div>)}</div></div>}
 
-function Status({value}:{value:string}){const good=["sent","emailed","signed","completed","scheduled"].includes(value.toLowerCase());return <span className={good?"status good":"status"}>{good&&<CheckCircle2 size={14}/>} {value}</span>}
+function Status({value}:{value:string}){const good=["sent","emailed","signed","completed","scheduled","approved","confirmed","rescheduled"].includes(value.toLowerCase());return <span className={good?"status good":"status"}>{good&&<CheckCircle2 size={14}/>} {value}</span>}
 function LeadDetail({lead,events,onAction}:{lead:Lead,events:AceEvent[],onAction:(l:Lead,a:LeadAction)=>void}){const history=[...events].filter(isWorkflowEvent).sort((a,b)=>b.createdAt-a.createdAt);return <aside className="detail-panel"><div className="detail-person"><span className="detail-avatar">{lead.firstName[0]}{lead.lastName?.[0]}</span><div><span className="eyebrow">SELECTED OPPORTUNITY</span><h2>{lead.company||`${lead.firstName} ${lead.lastName}`}</h2><p>{lead.company&&`${lead.firstName} ${lead.lastName} · `}{lead.selectedProduct||lead.interest}</p></div></div><div className="detail-score"><span>Qualification score</span><strong>{lead.score}</strong></div><section><h3>Contact</h3><p><Phone size={15}/>{lead.phone||"No phone"}</p><p><Mail size={15}/>{lead.email||"No email"}</p></section><section><h3>Alley workflow</h3><Timeline icon={<MessageSquare/>} title="Automated outreach" value={lead.outreachStatus||((lead.stage!=="New Inquiry")?"Active":"Queued")}/><Timeline icon={<Phone/>} title="Voice qualification" value={lead.callStatus||"Not called"}/><Timeline icon={<FileSignature/>} title="Proposal / Contract" value={lead.estimateNumber?`Estimate ${lead.estimateNumber} sent`:lead.documentStatus||"Not sent"}/><Timeline icon={<ShieldCheck/>} title="Provisioning" value={lead.deliveryAt?`${lead.deliveryStatus||"Scheduled"} · ${formatEtDateTime(lead.deliveryAt)}`:"Not scheduled"}/></section>{lead.estimateNumber&&<div className="estimate-summary"><span>Latest estimate</span><b>{lead.estimateNumber}</b>{Boolean(lead.estimatedMonthlyTotal)&&<strong>{Number(lead.estimatedMonthlyTotal).toLocaleString("en-US",{style:"currency",currency:"USD"})}/mo</strong>}</div>}<section className="workflow-history"><h3>Activity history <span>{history.length}</span></h3>{history.length?history.slice(0,30).map(event=><details className="workflow-event" key={event.id}><summary><span className={event.type.includes("failed")?"event-dot failed":"event-dot"}/><span><b>{workflowTitle(event)}</b><small>{workflowDescription(event)}</small><time>{new Date(event.createdAt).toLocaleString()}</time></span><ChevronRight size={14}/></summary><div className="workflow-event-detail">{workflowDetails(event).map(([label,value])=><div key={label}><span>{label}</span><p>{value}</p></div>)}</div></details>):<p className="empty-history">No workflow activity recorded yet.</p>}</section>{lead.docusignEnvelopeId&&<a className="primary-action secondary" href={`${DOC_BASE}/${encodeURIComponent(lead.id)}`} target="_blank" rel="noreferrer"><FileText size={16}/> View Contract PDF</a>}{lead.calendarEventUrl&&<a className="primary-action secondary" href={lead.calendarEventUrl} target="_blank" rel="noreferrer"><CalendarDays size={16}/> Open Deployment Event</a>}<div className="detail-date">{lead.deliveryAt&&`Deployment: ${formatEtMonthDay(lead.deliveryAt)} at ${formatEtTime(lead.deliveryAt)} ET`}</div><button className="primary-action" onClick={()=>onAction(lead,"call")}><Phone size={16}/> Start / Resume AI Call</button></aside>}
 function Timeline({icon,title,value}:{icon:any,title:string,value:string}){return <div className="timeline"><span>{icon}</span><div><b>{title}</b><small>{value}</small></div></div>}

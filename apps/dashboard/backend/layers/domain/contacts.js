@@ -1,13 +1,20 @@
 const { readDb, mutate } = require("../core/db");
 const { normalizeContact } = require("../../../shared/schemas");
 const activity = require("./activity");
+const { initialLeadScore, baselineOpportunityValue } = require("./lead-intelligence");
 
 function list() {
   return readDb().contacts;
 }
 
 function create(input) {
-  const contact = normalizeContact(input);
+  const initial = initialLeadScore(input);
+  const contact = normalizeContact({
+    ...input,
+    initialLeadScore:Number.isFinite(Number(input.initialLeadScore)) ? Number(input.initialLeadScore) : initial.score,
+    leadScore:Number.isFinite(Number(input.leadScore)) ? Number(input.leadScore) : initial.score,
+    value:Number(input.value) > 0 ? Number(input.value) : baselineOpportunityValue(input),
+  });
   mutate((db) => {
     db.contacts.unshift(contact);
     return db;

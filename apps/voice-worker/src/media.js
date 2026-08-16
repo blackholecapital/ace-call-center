@@ -37,6 +37,7 @@ function availableProducts(options=[]){
 }
 function requestsSalesFollowup(value=""){return /\b(sales|human|person|representative|transfer|callback|call back|appointment|schedule|proposal|quote|estimate)\b/i.test(String(value));}
 function requestsHumanHandoff(value=""){return /\b(sales(?:person| team)?|human|representative|transfer|callback|call back|have (?:someone|the team) call|talk to (?:someone|a person))\b/i.test(String(value));}
+function requestsSalesAppointment(value=""){return /\b(?:appointment|meeting|consultation)\b|\b(?:schedule|book|set up|arrange)\b.{0,35}\b(?:call|time|sales|meeting|appointment)\b/i.test(String(value));}
 function requestsEstimateDelivery(value=""){return /\b(?:email|send|prepare|create|get|receive)\b.{0,40}\b(?:estimate|quote|proposal)\b|\b(?:estimate|quote|proposal)\b.{0,40}\b(?:email|send|prepare|create|get|receive)\b/i.test(String(value));}
 function confirmsEstimateDelivery(value=""){return /\b(?:send|email)(?: it| that| the estimate| the quote)?(?: now| please)?\b|\byou can send it\b|^(?:yes|yes please|sure|okay|ok|go ahead|do it|please do)[.! ]*$/i.test(String(value).trim());}
 function offersEstimate(value=""){return /\b(?:email|send|prepare|put together|create)\b.{0,50}\b(?:estimate|quote|proposal)\b|\b(?:estimate|quote|proposal)\b.{0,50}\b(?:email|send|prepare|put together|create)\b/i.test(String(value));}
@@ -110,6 +111,7 @@ async function conciergeRequest(env,path,payload){
 const notifyProductSelection=(env,p)=>conciergeRequest(env,"/internal/product-selected",p);
 const sendPreliminaryEstimate=(env,p)=>conciergeRequest(env,"/internal/preliminary-estimate",p);
 const createSalesHandoff=(env,p)=>conciergeRequest(env,"/internal/sales-handoff",p);
+const createSalesAppointment=(env,p)=>conciergeRequest(env,"/internal/sales-appointment",p);
 const getDeliveryOptions=(env,id)=>conciergeRequest(env,"/internal/delivery-options",{contactId:id});
 const scheduleDelivery=(env,id,o)=>conciergeRequest(env,"/internal/delivery-schedule",{contactId:id,startIso:o.startIso,endIso:o.endIso,timeZone:o.timeZone});
 async function getContactStatus(env,id){if(!id)return null;try{return await conciergeRequest(env,"/internal/contact-status",{contactId:id});}catch(e){console.error("Buddy contact status lookup failed",{contactId:id,error:e?.message||String(e)});return null;}}
@@ -251,6 +253,18 @@ export function handleTwilioMediaSocket(request,env,ctx){
             pushEvent({type:"buddy.estimate.failed",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,error:error?.message||String(error)});
             try{await createSalesHandoff(env,handoffPayload(requirements,`Estimate delivery failed: ${error?.message||"unknown error"}`));await speak("I couldn’t confirm the email, so I created a sales-team handoff with your requirements instead of telling you it was sent.",generation,"buddy.estimate.failed");}
             catch(handoffError){console.error("ACE fallback handoff failed",{callSid:state.callSid,contactId:state.contactId,error:handoffError?.message||String(handoffError)});await speak("I couldn’t confirm the estimate email or the sales handoff. Your conversation is still attached to this lead for review.",generation,"buddy.estimate.failed");}
+          }
+          return;
+        }
+
+        if(requestsSalesAppointment(clean)){
+          const requirements=estimateRequirements(state,clean);
+          try{
+            await createSalesAppointment(env,{...handoffPayload(requirements,"Customer requested a sales appointment"),action:"request",notes:requirements,timeZone:"America/New_York"});
+            await speak("Absolutely. I logged a sales appointment request with everything we discussed. The team can approve a time or suggest another one, and you'll receive the confirmation by text or email.",generation,"buddy.sales.appointment-requested");
+          }catch(error){
+            console.error("ACE sales appointment request failed",{callSid:state.callSid,contactId:state.contactId,error:error?.message||String(error)});
+            await speak("I couldn't confirm the appointment request, so I won't pretend it was booked. Your conversation is still attached to this lead for the sales team to review.",generation,"buddy.sales.appointment-failed");
           }
           return;
         }

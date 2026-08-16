@@ -47,6 +47,7 @@ export default {
     const signingUrl = String(payload.docusign?.signingUrl || payload.signingUrl || "").trim();
     const productName = payload.product?.name || payload.productName || contact.selectedProduct || "your selected item";
     const delivery = payload.delivery || {};
+    const appointment = payload.appointment || {};
     const brand = brandName(env);
     const assistant = assistantName(env);
     const accent = brandColor(env);
@@ -127,6 +128,17 @@ export default {
         <h2 style="margin-top:0;color:${esc(accent)};">You're all set, ${esc(contact.firstName || "there")}.</h2>
         <p>We received your signed agreement${productName ? ` for the <strong>${esc(productName)}</strong>` : ""}.</p>
         <p>${esc(assistant)} can now help you choose an implementation consultation date and time.</p>`);
+    } else if (messageType === "ace-sales-appointment-approve" || messageType === "ace-sales-appointment-reschedule") {
+      const rescheduled = messageType.endsWith("reschedule");
+      subject = `Your ${brand} sales consultation is ${rescheduled ? "rescheduled" : "confirmed"}`;
+      html = shell(env, rescheduled ? "Sales consultation rescheduled" : "Sales consultation confirmed", `
+        <h2 style="margin-top:0;color:${esc(accent)};">${rescheduled ? "Your new time is set" : "Your consultation is confirmed"}, ${esc(contact.firstName || "there")}.</h2>
+        <p>An ${esc(brand)} infrastructure specialist will be ready to discuss <strong>${esc(contact.selectedProduct || contact.interest || "your requirements")}</strong>.</p>
+        <div style="margin:24px 0;padding:20px;background:#fff5f5;border:1px solid #f1caca;border-radius:8px;text-align:center;">
+          <div style="font-size:20px;font-weight:700;color:${esc(accent)};">${esc(appointment.label || appointment.start || "Confirmed")}</div>
+          ${appointment.notes ? `<div style="margin-top:8px;color:#555;">${esc(appointment.notes)}</div>` : ""}
+        </div>
+        <p>Reply to this email if anything changes. You can also reconnect with ${esc(assistant)} at any time by replying CALL to the latest text or using the call link in your welcome email.</p>`);
     } else if (messageType === "buddy-delivery-confirmed") {
       subject = `Your ${brand} implementation consultation is scheduled`;
       html = shell(env, "Implementation scheduled", `
@@ -173,7 +185,7 @@ export default {
       return Response.json({ ok:false, provider:"resend", status:response.status, error:data }, { status:500 });
     }
 
-    await emit(env, { type:"email.sent", contactId, messageType, provider:"resend", messageId:data.id || "", to:contact.email || "", subject, productName, deliveryAt:delivery.start || contact.deliveryAt || "" });
-    return Response.json({ ok:true, provider:"resend", messageId:data.id, messageType, callNowIncluded:Boolean(callNowUrl), signingLinkIncluded:Boolean(signingUrl), deliveryIncluded:messageType === "buddy-delivery-confirmed" });
+    await emit(env, { type:"email.sent", contactId, messageType, provider:"resend", messageId:data.id || "", to:contact.email || "", subject, productName, deliveryAt:delivery.start || contact.deliveryAt || "", appointmentAt:appointment.start || "" });
+    return Response.json({ ok:true, provider:"resend", messageId:data.id, messageType, callNowIncluded:Boolean(callNowUrl), signingLinkIncluded:Boolean(signingUrl), deliveryIncluded:messageType === "buddy-delivery-confirmed", appointmentIncluded:messageType.startsWith("ace-sales-appointment-") });
   }
 };

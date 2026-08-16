@@ -1,4 +1,5 @@
 const contacts = require("../../../layers/domain/contacts");
+const { progressiveLeadScore, baselineOpportunityValue } = require("../../../layers/domain/lead-intelligence");
 
 const STAGES = ["New Lead", "Contacted", "Engaged", "Estimate Sent", "Docs Sent", "Scheduled", "Closed"];
 const stageRank = (value) => Math.max(0, STAGES.indexOf(String(value || "New Lead")));
@@ -93,6 +94,14 @@ async function workflowFacts(env) {
         latestCallStatus:"",
         latestEmail:null,
         estimate:null,
+        customerWordCount:0,
+        requirements:"",
+        callCompleted:false,
+        productSelected:false,
+        salesHandoff:false,
+        appointmentRequested:false,
+        appointmentConfirmed:false,
+        closed:false,
         updatedAt:0,
       };
       const type = String(row.event_type || "").toLowerCase();
@@ -116,6 +125,17 @@ async function workflowFacts(env) {
         fact.engaged = true;
       }
 
+      if (type === "stt.transcript.final") {
+        const transcript = String(payload.transcript || row.text || "").trim();
+        fact.customerWordCount += transcript ? transcript.split(/\s+/).length : 0;
+      }
+      if (type === "call.completed") fact.callCompleted = true;
+      if (type.startsWith("buddy.product.")) fact.productSelected = true;
+      if (type === "sales.handoff.created") {
+        fact.salesHandoff = true;
+        fact.requirements = String(payload.requirements || fact.requirements || "");
+      }
+
       if (type === "email.sent") {
         fact.contacted = true;
         fact.latestEmail = payload;
@@ -129,6 +149,7 @@ async function workflowFacts(env) {
         fact.engaged = true;
         fact.estimateSent = true;
         fact.estimate = payload;
+        fact.requirements = String(payload.requirements || fact.requirements || "");
       }
       if (type === "docusign.sent") {
         fact.contacted = true;
@@ -140,6 +161,12 @@ async function workflowFacts(env) {
         fact.engaged = true;
         fact.scheduled = true;
       }
+      if (type === "sales.appointment.requested") fact.appointmentRequested = true;
+      if (type === "sales.appointment.approved" || type === "sales.appointment.rescheduled") {
+        fact.appointmentRequested = true;
+        fact.appointmentConfirmed = true;
+      }
+      if (type === "opportunity.closed") fact.closed = true;
 
       if (type.startsWith("call.")) {
         fact.latestCallStatus = type.slice(5).replaceAll("-", " ");
@@ -188,6 +215,11 @@ async function mergedContacts(env) {
       next.callStatus = `Call ${fact.latestCallStatus}`;
     }
     next.stage = furthestStage(next._dashboardStage, next.stage, inferStage(next));
+    const scoring = progressiveLeadScore(next, fact || {});
+    next.initialLeadScore = scoring.initialScore;
+    next.leadScore = scoring.score;
+    next.leadScoreBreakdown = scoring.items;
+    next.value = baselineOpportunityValue(next);
     return next;
   }).sort((a,b) => {
     const av = Number(a._buddyUpdatedAt || 0) || Date.parse(a.updatedAt || a.createdAt || 0) || 0;
