@@ -9,6 +9,11 @@ function base64ByteLength(value = "") {
   return Math.max(0, Math.floor((input.length * 3) / 4) - padding);
 }
 
+function positiveMilliseconds(value, fallback) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 function runtimeSettings(env) {
   return {
     enabled: enabled(env.EILA_RUNTIME_STREAMING),
@@ -16,6 +21,8 @@ function runtimeSettings(env) {
       .trim()
       .replace(/\/$/, ""),
     token: String(env.EILA_RUNTIME_TOKEN || env.BUDDY_RUNTIME_TOKEN || "").trim(),
+    firstAudioTimeoutMs: positiveMilliseconds(env.EILA_FIRST_AUDIO_TIMEOUT_MS, 8000),
+    totalTimeoutMs: positiveMilliseconds(env.EILA_TOTAL_TIMEOUT_MS, 30000),
   };
 }
 
@@ -31,16 +38,42 @@ async function streamEvents(env, path, payload, handlers = {}) {
   if (!settings.token) throw new Error("EILA_RUNTIME_TOKEN is not configured");
 
   const startedAt = Date.now();
-  const response = await fetch(`${settings.baseUrl}${path}`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "application/x-ndjson",
-      "x-runtime-token": settings.token,
-    },
-    body: JSON.stringify(payload),
-  });
+  const controller = new AbortController();
+  let timeoutStage = "first audio";
+  const firstAudioTimer = setTimeout(
+    () => controller.abort(),
+    settings.firstAudioTimeoutMs,
+  );
+  const totalTimer = setTimeout(() => {
+    timeoutStage = "completion";
+    controller.abort();
+  }, settings.totalTimeoutMs);
+
+  let response;
+  try {
+    response = await fetch(`${settings.baseUrl}${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/x-ndjson",
+        "x-runtime-token": settings.token,
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    clearTimeout(firstAudioTimer);
+    clearTimeout(totalTimer);
+    if (controller.signal.aborted) {
+      throw new Error(
+        `EILA runtime ${path} timed out waiting for ${timeoutStage}`,
+      );
+    }
+    throw error;
+  }
   if (!response.ok || !response.body) {
+    clearTimeout(firstAudioTimer);
+    clearTimeout(totalTimer);
     const detail = await response.text().catch(() => "");
     throw new Error(`EILA runtime ${path} failed (${response.status}): ${detail.slice(0, 240)}`);
   }
@@ -59,7 +92,10 @@ async function streamEvents(env, path, payload, handlers = {}) {
     if (item.type === "audio.chunk") {
       const audio = String(item.audio || "");
       if (audio) {
-        if (firstAudioMs === null) firstAudioMs = Date.now() - startedAt;
+        if (firstAudioMs === null) {
+          firstAudioMs = Date.now() - startedAt;
+          clearTimeout(firstAudioTimer);
+        }
         audioBytes += base64ByteLength(audio);
         audioChunks += 1;
         const keepGoing = await handlers.onAudio?.(audio, item);
@@ -96,8 +132,16 @@ async function streamEvents(env, path, payload, handlers = {}) {
     }
     if (buffer.trim()) await dispatch(JSON.parse(buffer));
   } catch (error) {
+    if (controller.signal.aborted && !audioBytes) {
+      error = new Error(
+        `EILA runtime ${path} timed out waiting for ${timeoutStage}`,
+      );
+    }
     if (error.partialAudio === undefined) error.partialAudio = audioBytes > 0;
     throw error;
+  } finally {
+    clearTimeout(firstAudioTimer);
+    clearTimeout(totalTimer);
   }
 
   return {
