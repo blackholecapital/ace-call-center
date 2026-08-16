@@ -1,6 +1,6 @@
 const contacts = require("../../../layers/domain/contacts");
 
-const STAGES = ["New Lead", "Contacted", "Engaged", "Docs Sent", "Scheduled", "Closed"];
+const STAGES = ["New Lead", "Contacted", "Engaged", "Estimate Sent", "Docs Sent", "Scheduled", "Closed"];
 const stageRank = (value) => Math.max(0, STAGES.indexOf(String(value || "New Lead")));
 const eventDb = (env) => env?.EVENTS_DB || env?.BUDDY_DB;
 
@@ -12,6 +12,7 @@ function inferStage(contact = {}) {
   if (String(contact.stage || "") === "Closed" || String(contact.deliveryStatus || "").toLowerCase() === "completed") return "Closed";
   if (contact.deliveryAt || String(contact.deliveryStatus || "").toLowerCase() === "scheduled") return "Scheduled";
   if (contact.docusignEnvelopeId || ["sent", "signed", "completed"].includes(String(contact.documentStatus || "").toLowerCase())) return "Docs Sent";
+  if (contact.estimateNumber || String(contact.estimateStatus || "").toLowerCase() === "sent") return "Estimate Sent";
   if (contact._buddyEngaged || contact.selectedProduct) return "Engaged";
 
   const call = String(contact.callStatus || "").toLowerCase();
@@ -96,6 +97,7 @@ async function workflowFacts(env) {
         type === "call.answered" || type === "call.in-progress" || type === "call.completed" ||
         type === "stt.transcript.final" || type === "buddy.turn.started" ||
         type.startsWith("buddy.product.") || type.startsWith("buddy.delivery.") ||
+        type === "sales.handoff.created" || type === "estimate.sent" ||
         type === "stream.media.stopped"
       ) {
         fact.contacted = true;
