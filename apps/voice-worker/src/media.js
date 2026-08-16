@@ -35,8 +35,10 @@ function availableProducts(options=[]){
   return options.length?options.map((option,index)=>`Option ${index+1}: ${option.name}. ${option.short}.`).join("\n"):"No fixed demo products are loaded for this inquiry.";
 }
 function requestsSalesFollowup(value=""){return /\b(sales|human|person|representative|transfer|callback|call back|appointment|schedule|proposal|quote|estimate)\b/i.test(String(value));}
+function requestsHumanHandoff(value=""){return /\b(sales(?:person| team)?|human|representative|transfer|callback|call back|have (?:someone|the team) call|talk to (?:someone|a person))\b/i.test(String(value));}
 function requestsEstimateDelivery(value=""){return /\b(?:email|send|prepare|create|get|receive)\b.{0,40}\b(?:estimate|quote|proposal)\b|\b(?:estimate|quote|proposal)\b.{0,40}\b(?:email|send|prepare|create|get|receive)\b/i.test(String(value));}
-function confirmsEstimateDelivery(value=""){return /\b(?:send|email)(?: it| that| the estimate| the quote)?(?: now| please)?\b|\byou can send it\b/i.test(String(value));}
+function confirmsEstimateDelivery(value=""){return /\b(?:send|email)(?: it| that| the estimate| the quote)?(?: now| please)?\b|\byou can send it\b|^(?:yes|yes please|sure|okay|ok|go ahead|do it|please do)[.! ]*$/i.test(String(value).trim());}
+function offersEstimate(value=""){return /\b(?:email|send|prepare|put together|create)\b.{0,50}\b(?:estimate|quote|proposal)\b|\b(?:estimate|quote|proposal)\b.{0,50}\b(?:email|send|prepare|put together|create)\b/i.test(String(value));}
 function estimateRequirements(state,current=""){const turns=(state.conversationHistory||[]).filter(turn=>turn.role==="user").map(turn=>String(turn.content||"").trim()).filter(Boolean);if(current)turns.push(String(current).trim());return [...new Set(turns)].join(" ");}
 function runtimeSalesPrompt(state,transcript,options=[]){
   return `SYSTEM: You are Alley, a warm, highly natural sales consultant for ACE Host speaking on a live phone call. Sound like a capable human account executive, never like a phone menu.
@@ -50,7 +52,7 @@ Selected product: ${state.selectedProduct?.name||"none"}
 CURRENT DEMO PRODUCTS:
 ${availableProducts(options)}
 
-CALL STAGE: ${state.openingResponseHandled?"Consultative sales discovery.":"The prospect is responding to Alley’s opening for the first time."}
+CALL STAGE: ${state.openingResponseHandled?`Short sales conversation; ${state.discoveryTurns} discovery response(s) completed.`:"The prospect is responding to Alley’s opening for the first time."}
 
 RECENT CONVERSATION:
 ${recentConversation(state)||"Alley has just opened the call."}
@@ -58,7 +60,7 @@ ${recentConversation(state)||"Alley has just opened the call."}
 PROSPECT JUST SAID:
 ${String(transcript||"")}
 
-Never greet the prospect again, never thank them for connecting, and never reintroduce Alley or ACE Host—the opening has already done that. If this is the first response to the opening, acknowledge it briefly and transition with one broad, comfortable question about what they are trying to accomplish. Otherwise, acknowledge what they said and ask at most one useful discovery question. Learn their rack or capacity requirement, power density, bandwidth, redundancy, workload, timeline, facility preference, and budget range naturally over several turns. Do not mention numbered options or push a product until the requirements are reasonably understood or the prospect explicitly asks for choices. Then recommend the closest fit conversationally and explain why. Never invent pricing, inventory, specifications, guarantees, or contract terms. For custom pricing, multiple racks, urgent deployment, or complex engineering, offer to send the exact requirements to the ACE Host sales team for a tailored estimate and follow-up. Do not claim anything was sent or scheduled unless confirmed. Never repeat a question the prospect has already answered. In data-center language, “three 4U servers” means three servers that are each four rack units tall; never reinterpret it as three-to-four servers. Keep the reply to one or two concise natural sentences, normally under 32 words. Return only the exact words Alley should say.`;
+Never greet the prospect again, never thank them for connecting, and never reintroduce Alley or ACE Host—the opening has already done that. Be personable and conversational: answer ordinary small talk directly and warmly. One brief, generic Tampa or Raleigh remark is fine, but never invent current weather, sports results, news, or statistics. On the first response, allow one rapport exchange, then ask one broad question about what they want to accomplish. After that, ask no more than one genuinely necessary clarification. Do not run a technical checklist and do not ask questions already answered. Once the prospect gives a rack size or a clear usable need, recommend the closest fit and offer to email a demo estimate. Approved demo pricing is: quarter rack $399 per month, half rack $799 per month, full rack $1,499 per month, with the standard $199 one-time setup fee waived for AI Concierge customers. Explain that the estimate is subject to technical review. If the need is custom or unclear after one clarification, offer a sales-team handoff using the exact requirements already captured. Do not mention numbered options. Do not claim an estimate, message, handoff, or appointment was sent or created; the application confirms those actions separately. Never keep looping back to requirements after enough information exists to quote or hand off. In data-center language, “three 4U servers” means three servers that are each four rack units tall. Keep the reply to one or two concise natural sentences, normally under 36 words. Return only the exact words Alley should say.`;
 }
 async function runtimeSalesReply(env,state,transcript,options=[]){
   const prompt=runtimeSalesPrompt(state,transcript,options);
@@ -95,6 +97,7 @@ async function conciergeRequest(env,path,payload){
 }
 const notifyProductSelection=(env,p)=>conciergeRequest(env,"/internal/product-selected",p);
 const sendPreliminaryEstimate=(env,p)=>conciergeRequest(env,"/internal/preliminary-estimate",p);
+const createSalesHandoff=(env,p)=>conciergeRequest(env,"/internal/sales-handoff",p);
 const getDeliveryOptions=(env,id)=>conciergeRequest(env,"/internal/delivery-options",{contactId:id});
 const scheduleDelivery=(env,id,o)=>conciergeRequest(env,"/internal/delivery-schedule",{contactId:id,startIso:o.startIso,endIso:o.endIso,timeZone:o.timeZone});
 async function getContactStatus(env,id){if(!id)return null;try{return await conciergeRequest(env,"/internal/contact-status",{contactId:id});}catch(e){console.error("Buddy contact status lookup failed",{contactId:id,error:e?.message||String(e)});return null;}}
@@ -171,6 +174,12 @@ export function handleTwilioMediaSocket(request,env,ctx){
     const n=normalizeUtterance(clean),now=Date.now(); if(!n)return true;
     const dup=n===state.lastUtterance && now-state.lastUtteranceAt<2500; state.lastUtterance=n; state.lastUtteranceAt=now; return dup;
   }
+  function rememberSalesTurn(clean,responseText){
+    state.conversationHistory.push({role:"user",content:clean},{role:"assistant",content:responseText});
+    state.openingResponseHandled=true;
+    if(offersEstimate(responseText))state.quoteRequested=true;
+  }
+  function handoffPayload(requirements,reason){return{contactId:state.contactId,firstName:state.firstName,lastName:state.lastName,phone:state.phone,email:state.email,interest:state.interest,location:state.location,comments:state.comments,leadScore:state.leadScore,preferredContactTime:state.preferredContactTime,requirements,reason,callSid:state.callSid,source:"ace-voice-worker"};}
 
   function processUtterance(transcript){
     const clean=String(transcript||"").trim(); if(!clean||!state.streamSid||duplicateUtterance(clean))return;
@@ -192,8 +201,9 @@ export function handleTwilioMediaSocket(request,env,ctx){
             return;
           }
           if(!quote){
-            await speak("I have your requirements, but I do not have an approved price for that configuration yet. I’ll flag it for an ACE Host specialist to prepare.",generation,"buddy.estimate.needs-review");
-            pushEvent({type:"buddy.estimate.needs-review",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,requirements});
+            try{await createSalesHandoff(env,handoffPayload(requirements,"Configuration requires technical pricing review"));await speak("I don’t have an approved price for that exact configuration, so I created a sales-team handoff with your requirements for a tailored estimate.",generation,"buddy.estimate.needs-review");}
+            catch(error){console.error("ACE sales handoff failed",{callSid:state.callSid,contactId:state.contactId,error:error?.message||String(error)});await speak("I don’t have an approved price for that configuration, and I couldn’t confirm a sales handoff. Your conversation is still attached to this lead for review.",generation,"buddy.estimate.needs-review");}
+            pushEvent({type:"buddy.estimate.needs-review",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,requirements,message:"Configuration requires technical pricing review"});
             return;
           }
           try{
@@ -202,12 +212,20 @@ export function handleTwilioMediaSocket(request,env,ctx){
             state.estimateNumber=String(result?.quote?.estimateNumber||"");
             if(!state.quoteSent)throw new Error(result?.email?.error||"Resend did not confirm estimate delivery");
             state.conversationHistory.push({role:"user",content:clean},{role:"assistant",content:`Estimate ${state.estimateNumber} emailed successfully.`});
-            await speak(`Done—I emailed ACE Host estimate ${state.estimateNumber}. It includes the RDU quarter rack configuration at ${new Intl.NumberFormat("en-US",{style:"currency",currency:quote.currency||"USD",maximumFractionDigits:0}).format(quote.monthlyTotal)} per month.`,generation,"buddy.estimate.sent");
+            await speak(`Done—I emailed ACE Host estimate ${state.estimateNumber} for ${quote.serviceName} in ${quote.facilityName} at ${new Intl.NumberFormat("en-US",{style:"currency",currency:quote.currency||"USD",maximumFractionDigits:0}).format(quote.monthlyTotal)} per month.`,generation,"buddy.estimate.sent");
           }catch(error){
             console.error("ACE estimate delivery failed",{callSid:state.callSid,contactId:state.contactId,error:error?.message||String(error)});
             pushEvent({type:"buddy.estimate.failed",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,error:error?.message||String(error)});
-            await speak("I couldn’t confirm the estimate email just now. I saved the request for the ACE Host team instead of telling you it was sent.",generation,"buddy.estimate.failed");
+            try{await createSalesHandoff(env,handoffPayload(requirements,`Estimate delivery failed: ${error?.message||"unknown error"}`));await speak("I couldn’t confirm the email, so I created a sales-team handoff with your requirements instead of telling you it was sent.",generation,"buddy.estimate.failed");}
+            catch(handoffError){console.error("ACE fallback handoff failed",{callSid:state.callSid,contactId:state.contactId,error:handoffError?.message||String(handoffError)});await speak("I couldn’t confirm the estimate email or the sales handoff. Your conversation is still attached to this lead for review.",generation,"buddy.estimate.failed");}
           }
+          return;
+        }
+
+        if(requestsHumanHandoff(clean)){
+          const requirements=estimateRequirements(state,clean);
+          try{await createSalesHandoff(env,handoffPayload(requirements,"Customer requested sales follow-up"));await speak("Absolutely. I created a handoff for the ACE Host sales team with what we discussed, so they can follow up without making you repeat everything.",generation,"buddy.sales.handoff-created");}
+          catch(error){console.error("ACE requested sales handoff failed",{callSid:state.callSid,contactId:state.contactId,error:error?.message||String(error)});await speak("I couldn’t confirm the sales handoff, so I won’t pretend it was sent. Your conversation is still attached to this lead for review.",generation,"buddy.sales.handoff-failed");}
           return;
         }
 
@@ -225,7 +243,7 @@ export function handleTwilioMediaSocket(request,env,ctx){
               if(generation!==state.turnGeneration)return;
               const sent=smsOk&&emailOk?"I sent the service proposal to your phone and email.":emailOk?"I sent the service proposal to your email.":smsOk?"I sent the service proposal to your phone.":"I created your service proposal, but the notification did not go through.";
               await speak(`${sent} Sign it, then wait for the confirmation text that says we received your documents before coming back to the call. It usually takes about 30 seconds.`,generation,"buddy.product.selection-sent");
-            }catch(error){console.error("Buddy product selection handoff failed",{contactId:state.contactId,productName:selected.name,error:error?.message||String(error)});if(generation===state.turnGeneration)await speak(`I've saved ${selected.name} as the best current fit. I'll pass your requirements to the ACE Host sales team so they can prepare a tailored estimate and follow up by text, email, or a scheduled call.`,generation,"buddy.product.selection-followup");}
+            }catch(error){console.error("Buddy product selection handoff failed",{contactId:state.contactId,productName:selected.name,error:error?.message||String(error)});if(generation===state.turnGeneration){const requirements=estimateRequirements(state,clean);try{await createSalesHandoff(env,handoffPayload(requirements,`Proposal workflow failed for ${selected.name}`));await speak(`I saved ${selected.name} as the best current fit and created a sales-team handoff with your requirements.`,generation,"buddy.product.selection-followup");}catch{await speak(`I saved ${selected.name} as the best current fit, but I couldn't confirm the proposal or sales handoff. Your call remains attached to the lead for review.`,generation,"buddy.product.selection-followup");}}}
             return;
           }
 
@@ -234,7 +252,7 @@ export function handleTwilioMediaSocket(request,env,ctx){
           const responseText=await speakSalesTurn(clean,options,generation,followup?"buddy.sales.followup-acknowledged":"buddy.sales.discovery-response");
           if(generation!==state.turnGeneration)return;
           if(!responseText)return;
-          state.conversationHistory.push({role:"user",content:clean},{role:"assistant",content:responseText}); state.openingResponseHandled=true;
+          rememberSalesTurn(clean,responseText);
           state.optionsOffered=state.optionsOffered||/\boption (?:one|two|1|2)\b/i.test(responseText);
           state.awaitingProductChoice=state.optionsOffered;
           pushEvent({type:followup?"buddy.sales.followup-requested":"buddy.sales.discovery",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,transcript:clean,response:responseText,interest:state.interest,discoveryTurns:state.discoveryTurns,followupRequested:followup});
@@ -255,7 +273,7 @@ export function handleTwilioMediaSocket(request,env,ctx){
             const responseText=await speakSalesTurn(clean,options,generation,followup?"buddy.sales.followup-acknowledged":"buddy.sales.discovery-response");
             if(generation!==state.turnGeneration)return;
             if(!responseText)return;
-            state.conversationHistory.push({role:"user",content:clean},{role:"assistant",content:responseText}); state.openingResponseHandled=true;
+            rememberSalesTurn(clean,responseText);
             pushEvent({type:followup?"buddy.sales.followup-requested":"buddy.sales.discovery",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,transcript:clean,response:responseText,selectedProduct:state.selectedProduct?.name||"",discoveryTurns:state.discoveryTurns,followupRequested:followup});
             return;
           }
@@ -282,7 +300,7 @@ export function handleTwilioMediaSocket(request,env,ctx){
         const responseText=await speakSalesTurn(clean,options,generation,followup?"buddy.sales.followup-acknowledged":"buddy.voice.response");
         if(generation!==state.turnGeneration)return;
         if(!responseText)return;
-        state.conversationHistory.push({role:"user",content:clean},{role:"assistant",content:responseText});
+        rememberSalesTurn(clean,responseText);
         pushEvent({type:followup?"buddy.sales.followup-requested":"buddy.turn.completed",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,transcript:clean,response:responseText,latencyMs:Date.now()-startedAt,followupRequested:followup});
       }catch(error){console.error("Buddy turn failed",{callSid:state.callSid,contactId:state.contactId,error:error?.message||String(error)});pushEvent({type:"buddy.turn.failed",callSid:state.callSid,streamSid:state.streamSid,contactId:state.contactId,error:error?.message||String(error)});}
     })(); if(ctx?.waitUntil)ctx.waitUntil(work);else work.catch(()=>{});
