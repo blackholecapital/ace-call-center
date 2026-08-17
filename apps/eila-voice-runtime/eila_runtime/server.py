@@ -4,10 +4,11 @@ import hmac
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import __version__
+from .audio import twilio_mulaw
 from .config import Settings
 from .engine import VoiceEngine
 from .protocol import ndjson, request_id
@@ -58,6 +59,7 @@ async def health():
         "service": "eila-voice-runtime",
         "version": __version__,
         "protocol": "ndjson-v1",
+        "compatibility": {"chat": True, "legacyTwilioTts": True},
         "llm": {
             "provider": settings.llm_provider,
             "model": settings.llm_model,
@@ -72,6 +74,30 @@ async def health():
 async def compatible_chat(req: ChatRequest, x_runtime_token: str | None = Header(default=None)):
     authorize(x_runtime_token)
     return {"response": await engine.llm.complete(req.text)}
+
+
+@app.post("/tts/twilio")
+async def compatible_twilio_tts(
+    req: SpeechRequest,
+    x_runtime_token: str | None = Header(default=None),
+):
+    """Compatibility endpoint for the existing Buddy/Blackhole voice worker.
+
+    The shared runtime remains the single LLM/TTS process. Older channel adapters can
+    keep requesting a complete 8 kHz mu-law payload while newer adapters use the
+    streaming NDJSON endpoints below.
+    """
+    authorize(x_runtime_token)
+    speech = await engine.tts.synthesize(req.text)
+    payload = twilio_mulaw(speech.samples, speech.sample_rate)
+    return Response(
+        content=payload,
+        media_type="audio/x-mulaw",
+        headers={
+            "x-eila-audio-encoding": "mulaw",
+            "x-eila-sample-rate": "8000",
+        },
+    )
 
 
 @app.post("/v1/speech")
