@@ -26,6 +26,7 @@ class ChatRequest(BaseModel):
 class SpeechRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
     sessionId: str | None = None
+    voiceId: str | None = None
 
 
 class TurnRequest(BaseModel):
@@ -33,6 +34,7 @@ class TurnRequest(BaseModel):
     sessionId: str | None = None
     tenantId: str | None = None
     assistantName: str | None = None
+    voiceId: str | None = None
     metadata: dict = Field(default_factory=dict)
     preface: str | None = Field(default=None, max_length=80)
 
@@ -59,7 +61,7 @@ async def health():
         "service": "eila-voice-runtime",
         "version": __version__,
         "protocol": "ndjson-v1",
-        "compatibility": {"chat": True, "legacyTwilioTts": True},
+        "compatibility": {"chat": True, "legacyTwilioTts": True, "multiVoice": True},
         "llm": {
             "provider": settings.llm_provider,
             "model": settings.llm_model,
@@ -81,14 +83,9 @@ async def compatible_twilio_tts(
     req: SpeechRequest,
     x_runtime_token: str | None = Header(default=None),
 ):
-    """Compatibility endpoint for the existing Buddy/Blackhole voice worker.
-
-    The shared runtime remains the single LLM/TTS process. Older channel adapters can
-    keep requesting a complete 8 kHz mu-law payload while newer adapters use the
-    streaming NDJSON endpoints below.
-    """
+    """Compatibility endpoint for older Buddy/Blackhole channel adapters."""
     authorize(x_runtime_token)
-    speech = await engine.tts.synthesize(req.text)
+    speech = await engine.tts.synthesize(req.text, req.voiceId)
     payload = twilio_mulaw(speech.samples, speech.sample_rate)
     return Response(
         content=payload,
@@ -96,6 +93,7 @@ async def compatible_twilio_tts(
         headers={
             "x-eila-audio-encoding": "mulaw",
             "x-eila-sample-rate": "8000",
+            "x-eila-voice-id": settings.resolve_voice_id(req.voiceId),
         },
     )
 
@@ -106,7 +104,7 @@ async def speech(req: SpeechRequest, x_runtime_token: str | None = Header(defaul
     rid = request_id("speech")
 
     async def body():
-        async for item in engine.stream_speech(req.text, rid):
+        async for item in engine.stream_speech(req.text, rid, voice_id=req.voiceId):
             yield ndjson(item)
 
     return StreamingResponse(body(), media_type="application/x-ndjson")
@@ -118,7 +116,12 @@ async def turn(req: TurnRequest, x_runtime_token: str | None = Header(default=No
     rid = request_id("turn")
 
     async def body():
-        async for item in engine.stream_turn(req.prompt, rid, preface=req.preface or ""):
+        async for item in engine.stream_turn(
+            req.prompt,
+            rid,
+            preface=req.preface or "",
+            voice_id=req.voiceId,
+        ):
             yield ndjson(item)
 
     return StreamingResponse(body(), media_type="application/x-ndjson")
