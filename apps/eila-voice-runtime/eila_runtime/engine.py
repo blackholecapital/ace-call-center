@@ -19,10 +19,13 @@ class VoiceEngine:
         self.llm = StreamingLlm(settings)
         self.tts = ChatterboxSpeech(settings)
 
-    async def stream_speech(self, text: str, request_id: str) -> AsyncIterator[dict]:
+    async def stream_speech(
+        self, text: str, request_id: str, voice_id: str | None = None
+    ) -> AsyncIterator[dict]:
         started = time.perf_counter()
-        yield event("audio.started", request_id, text=text)
-        speech = await self.tts.synthesize(text)
+        resolved_voice = self.settings.resolve_voice_id(voice_id)
+        yield event("audio.started", request_id, text=text, voiceId=resolved_voice)
+        speech = await self.tts.synthesize(text, resolved_voice)
         payload = twilio_mulaw(speech.samples, speech.sample_rate)
         for sequence, audio_chunk in enumerate(
             chunks(payload, self.settings.audio_chunk_ms, self.settings.telephony_sample_rate)
@@ -33,17 +36,26 @@ class VoiceEngine:
                 sequence=sequence,
                 encoding="audio/x-mulaw",
                 sampleRate=8000,
+                voiceId=resolved_voice,
                 audio=base64.b64encode(audio_chunk).decode("ascii"),
             )
         yield event(
             "audio.completed",
             request_id,
+            voiceId=resolved_voice,
             audioBytes=len(payload),
             latencyMs=round((time.perf_counter() - started) * 1000),
         )
 
-    async def stream_turn(self, prompt: str, request_id: str, preface: str = "") -> AsyncIterator[dict]:
+    async def stream_turn(
+        self,
+        prompt: str,
+        request_id: str,
+        preface: str = "",
+        voice_id: str | None = None,
+    ) -> AsyncIterator[dict]:
         started = time.perf_counter()
+        resolved_voice = self.settings.resolve_voice_id(voice_id)
         output: asyncio.Queue = asyncio.Queue()
         phrases: asyncio.Queue = asyncio.Queue()
         full_text: list[str] = []
@@ -54,9 +66,9 @@ class VoiceEngine:
 
         clean_preface = preface.strip()
         if clean_preface:
-            yield event("response.started", request_id)
-            yield event("text.preface", request_id, text=clean_preface)
-            speech = await self.tts.synthesize(clean_preface)
+            yield event("response.started", request_id, voiceId=resolved_voice)
+            yield event("text.preface", request_id, text=clean_preface, voiceId=resolved_voice)
+            speech = await self.tts.synthesize(clean_preface, resolved_voice)
             payload = twilio_mulaw(speech.samples, speech.sample_rate)
             audio_bytes += len(payload)
             for audio_chunk in chunks(
@@ -70,6 +82,7 @@ class VoiceEngine:
                     sequence=starting_sequence,
                     encoding="audio/x-mulaw",
                     sampleRate=8000,
+                    voiceId=resolved_voice,
                     audio=base64.b64encode(audio_chunk).decode("ascii"),
                 )
                 starting_sequence += 1
@@ -83,7 +96,7 @@ class VoiceEngine:
             )
             try:
                 if not clean_preface:
-                    await output.put(event("response.started", request_id))
+                    await output.put(event("response.started", request_id, voiceId=resolved_voice))
                 async for token in self.llm.stream(prompt):
                     full_text.append(token)
                     await output.put(event("text.delta", request_id, delta=token))
@@ -106,8 +119,15 @@ class VoiceEngine:
                     if phrase is None:
                         break
                     phrase_count += 1
-                    await output.put(event("text.phrase", request_id, phrase=phrase, phraseIndex=phrase_count - 1))
-                    speech = await self.tts.synthesize(phrase)
+                    await output.put(
+                        event(
+                            "text.phrase",
+                            request_id,
+                            phrase=phrase,
+                            phraseIndex=phrase_count - 1,
+                        )
+                    )
+                    speech = await self.tts.synthesize(phrase, resolved_voice)
                     payload = twilio_mulaw(speech.samples, speech.sample_rate)
                     audio_bytes += len(payload)
                     for audio_chunk in chunks(
@@ -122,6 +142,7 @@ class VoiceEngine:
                                 sequence=sequence,
                                 encoding="audio/x-mulaw",
                                 sampleRate=8000,
+                                voiceId=resolved_voice,
                                 audio=base64.b64encode(audio_chunk).decode("ascii"),
                             )
                         )
@@ -148,6 +169,7 @@ class VoiceEngine:
             "response.completed",
             request_id,
             text=response_text,
+            voiceId=resolved_voice,
             phraseCount=phrase_count,
             audioBytes=audio_bytes,
             firstAudioMs=first_audio_ms,
