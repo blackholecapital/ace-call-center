@@ -21,6 +21,7 @@ function runtimeSettings(env) {
       .trim()
       .replace(/\/$/, ""),
     token: String(env.EILA_RUNTIME_TOKEN || env.BUDDY_RUNTIME_TOKEN || "").trim(),
+    voiceId: String(env.EILA_VOICE_ID || "").trim().toLowerCase(),
     firstAudioTimeoutMs: positiveMilliseconds(env.EILA_FIRST_AUDIO_TIMEOUT_MS, 8000),
     totalTimeoutMs: positiveMilliseconds(env.EILA_TOTAL_TIMEOUT_MS, 30000),
   };
@@ -155,9 +156,15 @@ async function streamEvents(env, path, payload, handlers = {}) {
 }
 
 export function streamEilaSpeech(env, text, handlers) {
-  return streamEvents(env, "/v1/speech", { text }, handlers);
+  const settings = runtimeSettings(env);
+  const payload = { text };
+  if (settings.voiceId) payload.voiceId = settings.voiceId;
+  return streamEvents(env, "/v1/speech", payload, handlers);
 }
 
 export function streamEilaTurn(env, payload, handlers) {
-  return streamEvents(env, "/v1/turn", payload, handlers);
+  const settings = runtimeSettings(env);
+  const body = { ...(payload || {}) };
+  if (!body.voiceId && settings.voiceId) body.voiceId = settings.voiceId;
+  return streamEvents(env, "/v1/turn", body, handlers);
 }

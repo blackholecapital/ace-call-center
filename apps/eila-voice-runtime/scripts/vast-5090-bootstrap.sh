@@ -15,8 +15,12 @@ VENV_DIR="$STACK_ROOT/voice-venv"
 LOG_DIR="$STACK_ROOT/logs"
 HF_HOME_DIR="$SEED_DIR/.cache/huggingface"
 OLLAMA_MODELS_DIR="$SEED_DIR/ollama-persist/home/models"
-REFERENCE_SRC="$SEED_DIR/ace-call-center-eila/apps/eila-voice-runtime/assets/voices/alley/reference.wav"
+ARCHIVED_REFERENCE="$SEED_DIR/ace-call-center-eila/apps/eila-voice-runtime/assets/voices/alley/reference.wav"
 ARCHIVED_ENV="$SEED_DIR/ace-call-center-eila/apps/eila-voice-runtime/.env"
+# Optional small directory copied separately from Blackhole. Layout:
+# /workspace/voice-profiles/eila/reference.wav
+# /workspace/voice-profiles/ace/reference.wav
+VOICE_PROFILE_SEED="${EILA_VOICE_PROFILE_SEED:-/workspace/voice-profiles}"
 
 say() { printf '\n=== %s ===\n' "$*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -51,9 +55,21 @@ else
   git clone --depth 1 https://github.com/blackholecapital/ace-call-center.git "$REPO_DIR"
 fi
 
-mkdir -p "$RUNTIME_DIR/assets/voices/alley"
-[ -f "$REFERENCE_SRC" ] || die "Archived Alley/EILA reference voice is missing"
-cp -f "$REFERENCE_SRC" "$RUNTIME_DIR/assets/voices/alley/reference.wav"
+say "INSTALL VOICE PROFILES"
+mkdir -p "$RUNTIME_DIR/assets/voices/eila"
+if [ -d "$VOICE_PROFILE_SEED" ]; then
+  # Copy only profile directories/files, never secrets or model state.
+  cp -a "$VOICE_PROFILE_SEED"/. "$RUNTIME_DIR/assets/voices/"
+fi
+
+# The archived Alley reference is a fallback only. A separately copied
+# /workspace/voice-profiles/eila/reference.wav wins automatically.
+if [ ! -f "$RUNTIME_DIR/assets/voices/eila/reference.wav" ]; then
+  [ -f "$ARCHIVED_REFERENCE" ] || die "No EILA reference voice is available"
+  cp -f "$ARCHIVED_REFERENCE" "$RUNTIME_DIR/assets/voices/eila/reference.wav"
+fi
+
+find "$RUNTIME_DIR/assets/voices" -maxdepth 2 -type f -name reference.wav -print
 
 if [ -f "$ARCHIVED_ENV" ]; then
   cp -f "$ARCHIVED_ENV" "$RUNTIME_DIR/.env"
@@ -78,7 +94,10 @@ updates = {
     "EILA_LLM_KEEP_ALIVE": "-1",
     "EILA_TTS_BACKEND": "chatterbox",
     "EILA_TTS_DEVICE": "cuda",
-    "EILA_TTS_VOICE_REFERENCE": "assets/voices/alley/reference.wav",
+    "EILA_TTS_VOICE_ROOT": "assets/voices",
+    "EILA_TTS_DEFAULT_VOICE": "eila",
+    "EILA_TTS_VOICE_ALIASES": "ace:eila",
+    "EILA_TTS_VOICE_REFERENCE": "assets/voices/eila/reference.wav",
     "HF_HOME": hf_home,
 }
 lines = path.read_text().splitlines() if path.exists() else []
@@ -169,13 +188,21 @@ curl -fsS http://127.0.0.1:8000/chat \
   -d '{"text":"Reply with exactly: EILA runtime online"}' \
   | python3 -m json.tool
 
-say "LEGACY BUDDY TTS COMPATIBILITY TEST"
+say "EILA VOICE TEST"
 curl -fsS http://127.0.0.1:8000/tts/twilio \
   -H 'content-type: application/json' \
   -H "x-runtime-token: $RUNTIME_TOKEN" \
-  -d '{"text":"EILA voice runtime online."}' \
-  -o "$STACK_ROOT/test.mulaw"
-ls -lh "$STACK_ROOT/test.mulaw"
+  -d '{"text":"EILA voice runtime online.","voiceId":"eila"}' \
+  -o "$STACK_ROOT/test-eila.mulaw"
+ls -lh "$STACK_ROOT/test-eila.mulaw"
+
+say "ACE ALIAS TEST"
+curl -fsS http://127.0.0.1:8000/tts/twilio \
+  -H 'content-type: application/json' \
+  -H "x-runtime-token: $RUNTIME_TOKEN" \
+  -d '{"text":"ACE voice routing online.","voiceId":"ace"}' \
+  -o "$STACK_ROOT/test-ace.mulaw"
+ls -lh "$STACK_ROOT/test-ace.mulaw"
 
 say "GPU HEADROOM"
 nvidia-smi || true
@@ -183,6 +210,7 @@ nvidia-smi || true
 echo
 echo "VOICE READY"
 echo "Runtime: http://127.0.0.1:8000"
+echo "Profiles: $RUNTIME_DIR/assets/voices"
 echo "Logs:    $LOG_DIR/eila-voice-runtime.log"
 echo "Ollama:  $LOG_DIR/ollama.log"
 echo "Next: expose port 8000 on the Vast instance, then repoint the Cloudflare channel Workers to that public runtime URL."
