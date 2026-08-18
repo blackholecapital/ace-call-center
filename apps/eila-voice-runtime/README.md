@@ -4,59 +4,92 @@ Self-hosted realtime speech runtime shared by ACE Host, Blackhole/Buddy's, EILA 
 
 ## Why it exists
 
-The first ACE implementation waited for a complete remote response and then waited again for a complete TTS file. This runtime pipelines those stages:
+The runtime keeps one local LLM and one Chatterbox Turbo model warm on the GPU, while Cloudflare Workers continue to own tenant-specific prompts, CRM writes, tools and call flows.
 
-1. stream local LLM tokens;
-2. create short, natural phrase boundaries;
-3. synthesize each phrase with self-hosted Chatterbox Turbo;
-4. return 8 kHz G.711 mu-law chunks immediately;
-5. let the channel adapter forward audio while the rest of the response is still generating.
+It pipelines:
 
-The runtime does not contain ACE product logic, Buddy product logic, Twilio credentials, Cloudflare bindings, CRM writes, estimate rules, or EILA People/Calendar policy. Those remain channel/application concerns.
+1. local LLM tokens;
+2. short natural phrase boundaries;
+3. Chatterbox Turbo synthesis;
+4. immediate 8 kHz G.711 mu-law audio;
+5. channel forwarding while the remainder of the response is still generating.
 
-That separation is intentional: **one warm GPU runtime can serve multiple tenants and products while each Worker owns its own prompt, tools, CRM and call flow.**
+That separation allows one GPU process to serve multiple products without cloning a full inference stack for every tenant.
 
 ## API contract
 
 All protected endpoints require `x-runtime-token`.
 
-- `GET /health` - provider readiness and protocol metadata
+- `GET /health` - provider readiness, loaded voices and protocol metadata
 - `POST /chat` - compatibility endpoint returning `{ "response": "..." }`
-- `POST /tts/twilio` - compatibility endpoint returning a complete 8 kHz mu-law payload for older Buddy/Blackhole channel adapters
-- `POST /v1/speech` - NDJSON stream for deterministic text-to-speech
-- `POST /v1/turn` - NDJSON stream containing LLM deltas, phrases, mu-law audio chunks, and final timing
+- `POST /tts/twilio` - complete 8 kHz mu-law payload; accepts optional `voiceId`
+- `POST /v1/speech` - NDJSON TTS stream; accepts optional `voiceId`
+- `POST /v1/turn` - NDJSON LLM + TTS stream; accepts optional `voiceId`
 
-Important streaming event types:
-
-- `response.started`
-- `text.delta`
-- `text.phrase`
-- `audio.chunk` with base64 `audio/x-mulaw` at 8 kHz
-- `audio.completed`
-- `response.completed` with `firstAudioMs` and `totalLatencyMs`
-- `response.error`
-
-The same text and audio events can feed a telephone channel today and an avatar/lip-sync adapter later.
+The same text/audio events can feed telephone channels today and MuseTalk/avatar adapters later.
 
 ## Shared deployment model
 
-The intended production shape is:
-
 ```text
-                       ┌─ ACE voice worker
-                       ├─ Buddy/Blackhole voice worker
-Cloudflare channels ───┼─ EILA Overwatch / EILA voice worker
-                       └─ future ASOS/other tenant adapters
+                       ┌─ ACE voice worker       voiceId=ace
+                       ├─ Buddy/Blackhole worker current ChatGPT voice for now
+Cloudflare channels ───┼─ EILA Overwatch         voiceId=eila
+                       └─ future ASOS/tenants     voiceId=<profile>
                                │
                                ▼
                     one EILA Voice Runtime
                     Ollama + Qwen 3.5 9B
-                    Chatterbox Turbo
+                    one Chatterbox Turbo model
                                │
-                               └─ future MuseTalk/video adapter
+                               ├─ eila conditionals
+                               ├─ ace conditionals
+                               └─ future profiles
 ```
 
-Older Buddy/Blackhole Workers can use `/chat` + `/tts/twilio`. ACE already supports `/v1/turn`. Overwatch can use `/chat`. This lets the channels come online against one GPU process without running a separate legacy Buddy inference server.
+## Voice profiles
+
+Each selectable profile is a directory containing a clean reference WAV:
+
+```text
+assets/voices/
+├── eila/
+│   └── reference.wav
+├── ace/
+│   └── reference.wav
+└── another-profile/
+    └── reference.wav
+```
+
+Chatterbox model weights are loaded once. Speaker conditionals are prepared per profile, cached and swapped under a synthesis lock so simultaneous tenant requests cannot cross voices.
+
+Current recovery configuration:
+
+```text
+EILA_TTS_DEFAULT_VOICE=eila
+EILA_TTS_VOICE_ALIASES=ace:eila
+```
+
+That means EILA and ACE can temporarily share the EILA WAV. When a dedicated ACE recording is ready, place it at:
+
+```text
+assets/voices/ace/reference.wav
+```
+
+and remove the `ace:eila` alias. No second Chatterbox model or second GPU runtime is required.
+
+Buddy's remains on its existing ChatGPT/OpenAI TTS voice until intentionally migrated.
+
+### Request examples
+
+```json
+{"text":"Hello from EILA.","voiceId":"eila"}
+```
+
+```json
+{"text":"Hello from ACE.","voiceId":"ace"}
+```
+
+For `/v1/turn`, add the same `voiceId` field beside `prompt`, `tenantId`, and `assistantName`.
 
 ## Quick boot
 
@@ -64,56 +97,15 @@ Older Buddy/Blackhole Workers can use `/chat` + `/tts/twilio`. ACE already suppo
 cd apps/eila-voice-runtime
 cp .env.example .env
 openssl rand -hex 32
-# Put that value in EILA_RUNTIME_TOKEN, then configure the local LLM and voice reference.
+# Put that value in EILA_RUNTIME_TOKEN.
 ./quick-boot.sh
 ```
 
-The first boot creates `.venv`, installs pinned dependencies, loads Chatterbox, and starts port 8000. Later boots skip installation unless `requirements.txt` changed.
+The first boot creates a virtual environment, installs pinned dependencies, loads Chatterbox and starts port 8000. Later boots skip dependency installation unless `requirements.txt` changes.
 
-In another terminal:
+## Vast RTX 5090 bootstrap
 
-```bash
-cd apps/eila-voice-runtime
-set -a
-source .env
-set +a
-./scripts/smoke.sh
-```
-
-## Alley/EILA voice reference
-
-Place the licensed/consented British female reference at:
-
-```text
-assets/voices/alley/reference.wav
-```
-
-The canonical Blackhole voice backup dated 2026-08-17 preserves the working reference plus the Hugging Face model cache and Ollama `qwen3.5:9b` model store. Voice biometric material remains out of Git.
-
-## LLM providers
-
-`ollama` uses the local `/api/generate` streaming endpoint. `openai-compatible` uses a local `/v1/chat/completions` SSE server such as vLLM. The latter describes the wire format and does not require OpenAI.
-
-The default recovery model is now:
-
-```text
-qwen3.5:9b
-```
-
-## Production acceptance targets
-
-- p50 first audio below 800 ms
-- p95 first audio below 1.2 seconds
-- interruption clears queued Twilio audio within 250 ms
-- no provider API required for LLM or TTS
-- runtime remains warm between calls
-- voice reference and runtime token mounted as secrets, never committed
-
-Do not enable or repoint production channel adapters until `/health`, `/chat`, `/tts/twilio`, `/v1/speech`, and a complete test call pass.
-
-## Canonical recovery source
-
-Large artifacts are not stored in GitHub. The canonical 2026-08-17 voice recovery archive lives on the Blackhole hot sidecar at:
+The canonical Blackhole recovery archive is:
 
 ```text
 /mnt/eila-hot-sidecar/backups/runtime/runpod-voice-2026-08-17/eila-voice-portable-2026-08-17.tar
@@ -125,4 +117,47 @@ Verified SHA256:
 3c4f8c983ebaae9b12efd2c4eb1f64cdb1448b3891be132d12028fef87358d9c
 ```
 
-The archive contains the preserved model stores, reference voice and historical runtime state. GitHub supplies current application code. GPU hosts such as Vast are disposable compute targets.
+Optional current voice profiles should be copied separately to the GPU as:
+
+```text
+/workspace/voice-profiles/eila/reference.wav
+/workspace/voice-profiles/ace/reference.wav
+```
+
+Then run:
+
+```bash
+bash apps/eila-voice-runtime/scripts/vast-5090-bootstrap.sh \
+  /workspace/eila-voice-portable-2026-08-17.tar
+```
+
+The bootstrap verifies the archive, restores Qwen and Hugging Face model state, overlays `/workspace/voice-profiles`, boots Ollama and the EILA runtime, then tests EILA plus the ACE alias.
+
+## LLM provider
+
+The canonical recovered local model is:
+
+```text
+qwen3.5:9b
+```
+
+`ollama` uses the local `/api/generate` endpoint. `openai-compatible` can target an SSE-compatible local server such as vLLM.
+
+## Security
+
+Reference WAVs and runtime tokens are private runtime material. They must not be committed to Git. Canonical voice profiles live on Blackhole under:
+
+```text
+/mnt/eila-hot-sidecar/backups/runtime/voice-profiles/
+```
+
+## Production acceptance targets
+
+- p50 first audio below 800 ms
+- p95 first audio below 1.2 seconds
+- interruption clears queued Twilio audio within 250 ms
+- no external provider required for LLM or Chatterbox TTS
+- runtime remains warm between calls
+- voice references and runtime token remain outside source control
+
+Do not repoint production channels until `/health`, `/chat`, `/tts/twilio`, `/v1/speech`, voice routing and a complete test call pass.
