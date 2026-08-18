@@ -26,6 +26,8 @@ BARGE_IN_INTERIM_MIN_CONFIDENCE = "0.88"
 BUDDY_RUNTIME_URL = "https://erkn5tqy74wqqi-8000.proxy.runpod.net"
 EILA_RUNTIME_URL = "https://erkn5tqy74wqqi-8100.proxy.runpod.net"
 EILA_RUNTIME_STREAMING = "true"
+# The shared Chatterbox runtime currently aliases ACE -> EILA until a dedicated ACE WAV is installed.
+EILA_VOICE_ID = "ace"
 EILA_FIRST_AUDIO_TIMEOUT_MS = "8000"
 EILA_TOTAL_TIMEOUT_MS = "30000"
 BUDDY_OPENAI_TTS_MODEL = "gpt-4o-mini-tts"
