@@ -24,7 +24,9 @@ All protected endpoints require `x-runtime-token`.
 - `POST /chat` - compatibility endpoint returning `{ "response": "..." }`
 - `POST /tts/twilio` - complete 8 kHz mu-law payload; accepts optional `voiceId`
 - `POST /v1/speech` - NDJSON TTS stream; accepts optional `voiceId`
-- `POST /v1/turn` - NDJSON LLM + TTS stream; accepts optional `voiceId`
+- `POST /v1/turn` - NDJSON LLM + TTS stream; accepts optional `voiceId` and `avatarId`
+- `GET /v1/avatar-renders/{jobId}` - authenticated proxy for avatar job status
+- `GET /v1/avatar-renders/{jobId}/video` - authenticated proxy for completed MP4 output
 
 The same text/audio events can feed telephone channels today and MuseTalk/avatar adapters later.
 
@@ -90,6 +92,35 @@ Buddy's remains on its existing ChatGPT/OpenAI TTS voice until intentionally mig
 ```
 
 For `/v1/turn`, add the same `voiceId` field beside `prompt`, `tenantId`, and `assistantName`.
+
+## Optional avatar fan-out
+
+Avatar rendering is opt-in per turn. Configure the local adapter without exposing its
+token to Cloudflare clients or browsers:
+
+```text
+EILA_AVATAR_RUNTIME_URL=http://127.0.0.1:17102
+EILA_AVATAR_RUNTIME_TOKEN_FILE=/workspace/alley-golden/.avatar-runtime-token
+```
+
+An EILA Assistant turn requests the avatar explicitly:
+
+```json
+{
+  "prompt": "Give me the current project status.",
+  "sessionId": "eila-session",
+  "tenantId": "eila-assistant",
+  "assistantName": "Eila",
+  "voiceId": "eila",
+  "avatarId": "eila"
+}
+```
+
+Voice audio continues streaming immediately. After the clean Chatterbox waveform has
+been submitted, the stream emits `avatar.queued` with `jobId`, `statusUrl`, and
+`videoUrl`. An avatar failure emits `avatar.error` and does not fail or delay the
+already-delivered voice response. Requests without `avatarId` remain voice-only, so
+ACE phone calls and Buddy's existing ChatGPT route are unchanged.
 
 ## Quick boot
 

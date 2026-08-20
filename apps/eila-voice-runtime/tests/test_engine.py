@@ -7,6 +7,23 @@ from eila_runtime.engine import VoiceEngine
 from eila_runtime.tts import Speech
 
 
+class FakeAvatarJob:
+    job_id = "a" * 32
+    status = "queued"
+
+
+class FakeAvatar:
+    def __init__(self, error=None):
+        self.calls = []
+        self.error = error
+
+    async def render(self, samples, sample_rate, **metadata):
+        self.calls.append((samples, sample_rate, metadata))
+        if self.error:
+            raise self.error
+        return FakeAvatarJob()
+
+
 class FakeLlm:
     async def stream(self, _prompt):
         for token in ["I can help ", "with that today. ", "What capacity do you need?"]:
@@ -83,6 +100,73 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(events[-1]["voiceId"], "eila")
         self.assertTrue(all(voice_id == "eila" for voice_id in engine.tts.voice_ids))
+
+    async def test_avatar_turn_queues_clean_audio_without_changing_voice_stream(self):
+        settings = Settings(
+            runtime_token="test",
+            phrase_min_words=3,
+            phrase_target_words=6,
+            phrase_max_words=10,
+        )
+        engine = VoiceEngine(settings)
+        engine.llm = FakeLlm()
+        engine.tts = FakeTts()
+        engine.avatar = FakeAvatar()
+
+        events = [
+            item
+            async for item in engine.stream_turn(
+                "prompt",
+                "turn_avatar",
+                voice_id="eila",
+                avatar_id="eila",
+                session_id="session-1",
+                tenant_id="eila-assistant",
+                assistant_name="Eila",
+            )
+        ]
+        event_types = [item["type"] for item in events]
+        self.assertIn("audio.chunk", event_types)
+        self.assertEqual(event_types[-2:], ["avatar.queued", "response.completed"])
+        self.assertEqual(events[-1]["avatarJobId"], "a" * 32)
+        self.assertEqual(len(engine.avatar.calls), 1)
+        samples, sample_rate, metadata = engine.avatar.calls[0]
+        self.assertEqual(sample_rate, 24000)
+        self.assertGreater(samples.size, 0)
+        self.assertEqual(metadata["tenant_id"], "eila-assistant")
+
+    async def test_avatar_failure_is_nonfatal(self):
+        settings = Settings(
+            runtime_token="test",
+            phrase_min_words=3,
+            phrase_target_words=6,
+            phrase_max_words=10,
+        )
+        engine = VoiceEngine(settings)
+        engine.llm = FakeLlm()
+        engine.tts = FakeTts()
+        engine.avatar = FakeAvatar(RuntimeError("avatar offline"))
+
+        events = [
+            item
+            async for item in engine.stream_turn(
+                "prompt", "turn_avatar_error", avatar_id="eila"
+            )
+        ]
+        self.assertEqual(events[-2]["type"], "avatar.error")
+        self.assertEqual(events[-1]["type"], "response.completed")
+        self.assertEqual(events[-1]["avatarError"], "avatar offline")
+
+    async def test_voice_only_turn_does_not_call_avatar(self):
+        settings = Settings(runtime_token="test")
+        engine = VoiceEngine(settings)
+        engine.llm = FakeLlm()
+        engine.tts = FakeTts()
+        engine.avatar = FakeAvatar()
+
+        events = [item async for item in engine.stream_turn("prompt", "turn_voice_only")]
+        self.assertEqual(events[-1]["type"], "response.completed")
+        self.assertEqual(engine.avatar.calls, [])
 
 
 if __name__ == "__main__":

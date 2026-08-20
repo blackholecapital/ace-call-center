@@ -96,6 +96,13 @@ class Settings:
     phrase_max_words: int = _integer("EILA_PHRASE_MAX_WORDS", 18)
     phrase_first_max_words: int = _integer("EILA_PHRASE_FIRST_MAX_WORDS", 6)
 
+    # Optional MuseTalk adapter. Requests remain voice-only unless they include
+    # avatarId, even when the adapter is configured.
+    avatar_runtime_url: str = os.getenv("EILA_AVATAR_RUNTIME_URL", "")
+    avatar_runtime_token: str = os.getenv("EILA_AVATAR_RUNTIME_TOKEN", "")
+    avatar_runtime_token_file: str = os.getenv("EILA_AVATAR_RUNTIME_TOKEN_FILE", "")
+    avatar_timeout_seconds: float = _floating("EILA_AVATAR_TIMEOUT_SECONDS", 20.0)
+
     @property
     def voice_reference_path(self) -> Path:
         path = Path(self.tts_voice_reference)
@@ -155,6 +162,26 @@ class Settings:
             pass
         return sorted(voices)
 
+    @property
+    def resolved_avatar_runtime_token(self) -> str:
+        direct = self.avatar_runtime_token.strip()
+        if direct:
+            return direct
+        token_file = self.avatar_runtime_token_file.strip()
+        if not token_file:
+            return ""
+        path = Path(token_file)
+        if not path.is_absolute():
+            path = Path.cwd() / path
+        try:
+            return path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+
+    @property
+    def avatar_enabled(self) -> bool:
+        return bool(self.avatar_runtime_url.strip() and self.resolved_avatar_runtime_token)
+
     def validate(self) -> None:
         if not self.runtime_token:
             raise RuntimeError("EILA_RUNTIME_TOKEN is required")
@@ -166,3 +193,8 @@ class Settings:
             self.voice_reference_for(self.tts_default_voice)
         if self.telephony_sample_rate != 8000:
             raise RuntimeError("Twilio output currently requires EILA_TELEPHONY_SAMPLE_RATE=8000")
+        if self.avatar_runtime_url.strip() and not self.resolved_avatar_runtime_token:
+            raise RuntimeError(
+                "EILA_AVATAR_RUNTIME_URL requires EILA_AVATAR_RUNTIME_TOKEN or "
+                "EILA_AVATAR_RUNTIME_TOKEN_FILE"
+            )

@@ -35,6 +35,7 @@ class TurnRequest(BaseModel):
     tenantId: str | None = None
     assistantName: str | None = None
     voiceId: str | None = None
+    avatarId: str | None = Field(default=None, pattern=r"^[a-z0-9_-]+$")
     metadata: dict = Field(default_factory=dict)
     preface: str | None = Field(default=None, max_length=80)
 
@@ -68,6 +69,7 @@ async def health():
             "baseUrlConfigured": bool(settings.llm_base_url),
         },
         "tts": engine.tts.status(),
+        "avatar": engine.avatar.status(),
         "audio": {"encoding": "audio/x-mulaw", "sampleRate": 8000},
     }
 
@@ -121,7 +123,34 @@ async def turn(req: TurnRequest, x_runtime_token: str | None = Header(default=No
             rid,
             preface=req.preface or "",
             voice_id=req.voiceId,
+            avatar_id=req.avatarId,
+            session_id=req.sessionId or "",
+            tenant_id=req.tenantId or "",
+            assistant_name=req.assistantName or "",
         ):
             yield ndjson(item)
 
     return StreamingResponse(body(), media_type="application/x-ndjson")
+
+
+@app.get("/v1/avatar-renders/{job_id}")
+async def avatar_render_status(
+    job_id: str, x_runtime_token: str | None = Header(default=None)
+):
+    authorize(x_runtime_token)
+    try:
+        return await engine.avatar.get_job(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/v1/avatar-renders/{job_id}/video")
+async def avatar_render_video(
+    job_id: str, x_runtime_token: str | None = Header(default=None)
+):
+    authorize(x_runtime_token)
+    try:
+        content, media_type = await engine.avatar.get_video(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Response(content=content, media_type=media_type)
