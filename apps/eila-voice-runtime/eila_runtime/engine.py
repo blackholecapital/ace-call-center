@@ -5,7 +5,10 @@ import base64
 import time
 from collections.abc import AsyncIterator
 
-from .audio import chunks, twilio_mulaw
+import numpy as np
+
+from .audio import chunks, resample, twilio_mulaw
+from .avatar import AvatarRuntime
 from .config import Settings
 from .llm import StreamingLlm
 from .protocol import event
@@ -18,6 +21,7 @@ class VoiceEngine:
         self.settings = settings
         self.llm = StreamingLlm(settings)
         self.tts = ChatterboxSpeech(settings)
+        self.avatar = AvatarRuntime(settings)
 
     async def stream_speech(
         self, text: str, request_id: str, voice_id: str | None = None
@@ -53,6 +57,10 @@ class VoiceEngine:
         request_id: str,
         preface: str = "",
         voice_id: str | None = None,
+        avatar_id: str | None = None,
+        session_id: str = "",
+        tenant_id: str = "",
+        assistant_name: str = "",
     ) -> AsyncIterator[dict]:
         started = time.perf_counter()
         resolved_voice = self.settings.resolve_voice_id(voice_id)
@@ -63,12 +71,17 @@ class VoiceEngine:
         audio_bytes = 0
         first_audio_ms = None
         starting_sequence = 0
+        avatar_audio: list[np.ndarray] = []
 
         clean_preface = preface.strip()
         if clean_preface:
             yield event("response.started", request_id, voiceId=resolved_voice)
             yield event("text.preface", request_id, text=clean_preface, voiceId=resolved_voice)
             speech = await self.tts.synthesize(clean_preface, resolved_voice)
+            if avatar_id:
+                avatar_audio.append(
+                    resample(speech.samples, speech.sample_rate, self.settings.tts_sample_rate)
+                )
             payload = twilio_mulaw(speech.samples, speech.sample_rate)
             audio_bytes += len(payload)
             for audio_chunk in chunks(
@@ -128,6 +141,14 @@ class VoiceEngine:
                         )
                     )
                     speech = await self.tts.synthesize(phrase, resolved_voice)
+                    if avatar_id:
+                        avatar_audio.append(
+                            resample(
+                                speech.samples,
+                                speech.sample_rate,
+                                self.settings.tts_sample_rate,
+                            )
+                        )
                     payload = twilio_mulaw(speech.samples, speech.sample_rate)
                     audio_bytes += len(payload)
                     for audio_chunk in chunks(
@@ -165,13 +186,52 @@ class VoiceEngine:
             await asyncio.gather(*tasks, return_exceptions=True)
 
         response_text = "".join(full_text).strip()
-        yield event(
-            "response.completed",
-            request_id,
-            text=response_text,
-            voiceId=resolved_voice,
-            phraseCount=phrase_count,
-            audioBytes=audio_bytes,
-            firstAudioMs=first_audio_ms,
-            totalLatencyMs=round((time.perf_counter() - started) * 1000),
-        )
+        completion = {
+            "text": response_text,
+            "voiceId": resolved_voice,
+            "phraseCount": phrase_count,
+            "audioBytes": audio_bytes,
+            "firstAudioMs": first_audio_ms,
+        }
+
+        if avatar_id:
+            try:
+                if not avatar_audio:
+                    raise RuntimeError("No synthesized audio was available for avatar rendering")
+                job = await self.avatar.render(
+                    np.concatenate(avatar_audio),
+                    self.settings.tts_sample_rate,
+                    avatar_id=avatar_id,
+                    session_id=session_id,
+                    tenant_id=tenant_id,
+                    assistant_name=assistant_name,
+                    voice_id=resolved_voice,
+                )
+                status_url = f"/v1/avatar-renders/{job.job_id}"
+                video_url = f"{status_url}/video"
+                completion.update(
+                    avatarId=avatar_id,
+                    avatarJobId=job.job_id,
+                    avatarStatusUrl=status_url,
+                    avatarVideoUrl=video_url,
+                )
+                yield event(
+                    "avatar.queued",
+                    request_id,
+                    avatarId=avatar_id,
+                    jobId=job.job_id,
+                    status=job.status,
+                    statusUrl=status_url,
+                    videoUrl=video_url,
+                )
+            except Exception as exc:
+                completion.update(avatarId=avatar_id, avatarError=str(exc))
+                yield event(
+                    "avatar.error",
+                    request_id,
+                    avatarId=avatar_id,
+                    error=str(exc),
+                )
+
+        completion["totalLatencyMs"] = round((time.perf_counter() - started) * 1000)
+        yield event("response.completed", request_id, **completion)
