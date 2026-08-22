@@ -10,6 +10,15 @@ assert.throws(() => liveVideo.zoomMeetingUrl("https://example.com/j/123"), /Zoom
 assert.throws(() => liveVideo.zoomMeetingUrl("https://zoom.us/w/123"), /participant/);
 
 (async () => {
+  const adminToken = await liveVideo.liveKitAdminToken(
+    "test-key",
+    "test-secret-with-more-than-thirty-two-bytes",
+  );
+  const claims = JSON.parse(Buffer.from(adminToken.split(".")[1], "base64url").toString("utf8"));
+  assert.equal(claims.iss, "test-key");
+  assert.equal(claims.sub, undefined);
+  assert.equal(claims.video.roomAdmin, true);
+
   const originalFetch = global.fetch;
   let request;
   global.fetch = async (url, init) => {
