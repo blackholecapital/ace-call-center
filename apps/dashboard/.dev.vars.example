@@ -15,3 +15,11 @@ TWILIO_FROM_NUMBER=
 # Set providers.email to "sendgrid" in settings to activate
 SENDGRID_API_KEY=
 SENDGRID_FROM_EMAIL=
+
+# --- Live video (LiveKit + Zoom) ---
+# Set these with `wrangler secret put` in production.
+LIVEKIT_API_KEY=
+LIVEKIT_API_SECRET=
+ZOOM_ACCOUNT_ID=
+ZOOM_CLIENT_ID=
+ZOOM_CLIENT_SECRET=

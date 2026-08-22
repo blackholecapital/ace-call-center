@@ -27,6 +27,10 @@ TENANT_PROFILE = "data-center"
 BRAND_NAME = "ACE Host"
 ASSISTANT_NAME = "Alley"
 DASHBOARD_PUBLIC_URL = "https://ace-dashboard-worker.cryptocapitalgroupfl.workers.dev"
+LIVEKIT_URL = "wss://eila-7257eve9.livekit.cloud"
+LIVEKIT_MEETING_AGENT_NAME = "lemonslice"
+LIVE_VIDEO_BOT_NAME = "EILA · ACE Host"
+ZOOM_USER_ID = "me"
 
 [[d1_databases]]
 binding = "DB"

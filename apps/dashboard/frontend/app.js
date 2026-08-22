@@ -12,6 +12,7 @@ async function boot() {
   await loadScript("/lib/core.js");
   await loadScript("/lib/views-main.js");
   await loadScript("/lib/views-messaging.js");
+  await loadScript("/lib/views-live-video.js");
   await loadScript("/lib/views-admin.js");
 
   setupDelegation();
@@ -50,6 +51,7 @@ window.renderPage = async function renderPage() {
     dashboard: renderDashboard, contacts: renderContacts, templates: renderTemplates,
     campaigns: renderCampaigns, inbox: renderInbox, conversations: renderConversations,
     activity: renderActivity, settings: renderSettings, "rate-limits": renderRateLimits,
+    "live-video": renderLiveVideo,
   };
 
   const renderer = views[currentPage()];
@@ -64,6 +66,7 @@ function bindPageActions() {
   if (page === "settings") bindSettingsForm();
   if (page === "campaigns") bindCampaignToolbar();
   if (page === "conversations") bindConversationComposer();
+  if (page === "live-video") bindLiveVideoForm();
 }
 
 boot();
