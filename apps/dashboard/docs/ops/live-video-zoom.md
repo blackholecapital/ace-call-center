@@ -7,15 +7,20 @@ link in job metadata.
 
 ## Required Worker secrets
 
-Set these from `apps/dashboard` without placing them in Git:
+From `apps/dashboard`, run the interactive deployment helper:
 
 ```bash
-npx wrangler secret put LIVEKIT_API_KEY
-npx wrangler secret put LIVEKIT_API_SECRET
-npx wrangler secret put ZOOM_ACCOUNT_ID
-npx wrangler secret put ZOOM_CLIENT_ID
-npx wrangler secret put ZOOM_CLIENT_SECRET
+bash scripts/deploy-live-video.sh
 ```
+
+Wrangler prompts for each secret without storing it in shell history, then
+deploys ACE Host. The helper configures:
+
+- `LIVEKIT_API_KEY`
+- `LIVEKIT_API_SECRET`
+- `ZOOM_ACCOUNT_ID`
+- `ZOOM_CLIENT_ID`
+- `ZOOM_CLIENT_SECRET`
 
 The three Zoom secrets are only required when ACE Host creates a new meeting.
 Dispatching EILA into an existing Zoom link only requires the two LiveKit
