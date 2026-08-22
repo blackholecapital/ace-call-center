@@ -7,7 +7,7 @@ function base64Url(value) {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-async function liveKitAdminToken(apiKey, apiSecret) {
+async function liveKitAdminToken(apiKey, apiSecret, room) {
   const now = Math.floor(Date.now() / 1000);
   // Match LiveKit's official server SDK token shape exactly. Service tokens
   // have an issuer and grant, but no participant subject/identity.
@@ -16,7 +16,7 @@ async function liveKitAdminToken(apiKey, apiSecret) {
     iss:String(apiKey),
     nbf:now,
     exp:now + 300,
-    video:{ roomAdmin:true },
+    video:{ roomAdmin:true, room:String(room) },
   }));
   const unsigned = `${header}.${payload}`;
   const key = await crypto.subtle.importKey(
@@ -95,7 +95,7 @@ async function dispatchEila(env, meetingUrl) {
     throw new Error("LiveKit dispatch is not configured");
   }
   const room = `ace-video-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
-  const token = await liveKitAdminToken(env.LIVEKIT_API_KEY, env.LIVEKIT_API_SECRET);
+  const token = await liveKitAdminToken(env.LIVEKIT_API_KEY, env.LIVEKIT_API_SECRET, room);
   const response = await fetch(`${liveKitHttpUrl(env.LIVEKIT_URL)}${LIVEKIT_DISPATCH_PATH}`, {
     method:"POST",
     headers:{ Authorization:`Bearer ${token}`, "Content-Type":"application/json" },
