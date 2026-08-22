@@ -112,7 +112,7 @@ async function createZoomMeeting(env, topic) {
 
 function cleanMetadata(input = {}) {
   const allowed = [
-    "product", "creator_id", "creator_name", "creator_slug", "avatar_image_url",
+    "product", "creator_id", "creator_name", "creator_slug", "lemonslice_agent_id", "avatar_image_url",
     "voice_id", "instructions", "fan_id", "bot_name", "listen_to_meeting_chat",
   ];
   const out = {};
@@ -167,6 +167,7 @@ async function createBrowserSession(env, body = {}) {
     creator_id:creatorId,
     creator_name:String(body.creatorName || body.creator_name || creatorId).slice(0, 120),
     creator_slug:String(body.creatorSlug || body.creator_slug || creatorId).slice(0, 120),
+    lemonslice_agent_id:String(body.lemonsliceAgentId || body.lemonslice_agent_id || "").slice(0, 240),
     avatar_image_url:String(body.avatarImageUrl || body.avatar_image_url || "").slice(0, 2000),
     voice_id:String(body.voiceId || body.voice_id || "eila").slice(0, 120),
     instructions:String(body.instructions || "").slice(0, 4000),
