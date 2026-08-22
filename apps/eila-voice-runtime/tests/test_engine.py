@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 
 import numpy as np
@@ -40,7 +41,68 @@ class FakeTts:
         return Speech(np.zeros(int(24000 * duration), dtype=np.float32), 24000)
 
 
+class BlockingSecondPhraseTts(FakeTts):
+    def __init__(self):
+        super().__init__()
+        self.second_phrase_started = asyncio.Event()
+        self.release_second_phrase = asyncio.Event()
+
+    async def synthesize(self, text, voice_id=None):
+        if self.voice_ids:
+            self.second_phrase_started.set()
+            await self.release_second_phrase.wait()
+        return await super().synthesize(text, voice_id)
+
+
 class EngineTests(unittest.IsolatedAsyncioTestCase):
+    async def test_livekit_stream_emits_before_all_phrases_finish(self):
+        settings = Settings(
+            runtime_token="test",
+            phrase_min_words=2,
+            phrase_target_words=4,
+            phrase_max_words=8,
+            phrase_first_max_words=4,
+            audio_chunk_ms=100,
+        )
+        engine = VoiceEngine(settings)
+        engine.tts = BlockingSecondPhraseTts()
+        stream = engine.stream_livekit_speech(
+            "I can help with that today. What capacity do you need?",
+            "livekit_test",
+        )
+
+        first_chunk = await anext(stream)
+
+        self.assertEqual(len(first_chunk), 4800)
+        self.assertFalse(engine.tts.second_phrase_started.is_set())
+        await stream.aclose()
+
+    async def test_livekit_stream_is_continuous_pcm16(self):
+        settings = Settings(
+            runtime_token="test",
+            phrase_min_words=2,
+            phrase_target_words=4,
+            phrase_max_words=8,
+            phrase_first_max_words=4,
+            audio_chunk_ms=100,
+        )
+        engine = VoiceEngine(settings)
+        engine.tts = FakeTts()
+
+        chunks = [
+            chunk
+            async for chunk in engine.stream_livekit_speech(
+                "I can help with that today. What capacity do you need?",
+                "livekit_pcm_test",
+            )
+        ]
+
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(len(chunk) <= 4800 for chunk in chunks))
+        self.assertTrue(all(len(chunk) % 2 == 0 for chunk in chunks))
+        pcm = np.frombuffer(b"".join(chunks), dtype="<i2")
+        self.assertGreater(pcm.size, 0)
+
     async def test_turn_stream_contains_text_audio_and_metrics(self):
         settings = Settings(
             runtime_token="test",
