@@ -8,7 +8,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import __version__
-from .audio import twilio_mulaw
+from .audio import pcm16, resample, twilio_mulaw
 from .config import Settings
 from .engine import VoiceEngine
 from .protocol import ndjson, request_id
@@ -62,7 +62,12 @@ async def health():
         "service": "eila-voice-runtime",
         "version": __version__,
         "protocol": "ndjson-v1",
-        "compatibility": {"chat": True, "legacyTwilioTts": True, "multiVoice": True},
+        "compatibility": {
+            "chat": True,
+            "legacyTwilioTts": True,
+            "livekitPcmTts": True,
+            "multiVoice": True,
+        },
         "llm": {
             "provider": settings.llm_provider,
             "model": settings.llm_model,
@@ -95,6 +100,29 @@ async def compatible_twilio_tts(
         headers={
             "x-eila-audio-encoding": "mulaw",
             "x-eila-sample-rate": "8000",
+            "x-eila-voice-id": settings.resolve_voice_id(req.voiceId),
+        },
+    )
+
+
+@app.post("/tts/livekit")
+async def compatible_livekit_tts(
+    req: SpeechRequest,
+    x_runtime_token: str | None = Header(default=None),
+):
+    """Return full-quality 24 kHz mono PCM16 for LiveKit avatar pipelines."""
+    authorize(x_runtime_token)
+    speech = await engine.tts.synthesize(req.text, req.voiceId)
+    sample_rate = 24000
+    samples = resample(speech.samples, speech.sample_rate, sample_rate)
+    payload = pcm16(samples).astype("<i2", copy=False).tobytes()
+    return Response(
+        content=payload,
+        media_type="audio/pcm",
+        headers={
+            "x-eila-audio-encoding": "pcm_s16le",
+            "x-eila-sample-rate": str(sample_rate),
+            "x-eila-num-channels": "1",
             "x-eila-voice-id": settings.resolve_voice_id(req.voiceId),
         },
     )
