@@ -75,3 +75,16 @@ class PhraseChunker:
             self._phrase_count += 1
             return [clean]
         return []
+
+    def split_completed(self, text: str) -> list[str]:
+        """Split completed text using the same rules as streaming LLM output.
+
+        Feeding one lexical token at a time is intentional: ``push`` may emit at
+        most one phrase per call, while a completed reply can contain many phrase
+        boundaries in a single string.
+        """
+        phrases: list[str] = []
+        for token in re.findall(r"\S+(?:\s+|$)", str(text)):
+            phrases.extend(self.push(token))
+        phrases.extend(self.flush())
+        return phrases
