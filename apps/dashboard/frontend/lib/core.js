@@ -179,6 +179,9 @@ const NAV = [
     { id:"conversations", label:"Conversations", icon:"\u25C8" },
     { id:"activity", label:"Activity Log", icon:"\u25D4" },
   ]},
+  { section:"Live", items:[
+    { id:"live-video", label:"Live Video Chat", icon:"\u25B6" },
+  ]},
   { section:"Admin", items:[
     { id:"settings", label:"Settings", icon:"\u25E6" },
     { id:"health", label:"System Health", icon:"\u25C9" },

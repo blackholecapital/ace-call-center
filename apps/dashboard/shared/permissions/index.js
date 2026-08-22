@@ -47,6 +47,7 @@ const ROUTE_PERMISSIONS = {
   "DELETE /api/contacts": "contacts:write",
   "POST /api/contacts/import": "contacts:write",
   "POST /api/appointments": "contacts:write",
+  "POST /api/live-video": "dashboard:read",
   "GET /api/templates": "templates:read",
   "POST /api/templates": "templates:write",
   "PUT /api/templates": "templates:write",

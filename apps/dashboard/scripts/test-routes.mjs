@@ -10,6 +10,7 @@ const tests = [
   "/api/campaigns",
   "/api/inbox",
   "/api/settings",
+  "/api/live-video",
 ];
 
 for (const path of tests) {
