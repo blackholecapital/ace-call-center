@@ -9,11 +9,12 @@ function base64Url(value) {
 
 async function liveKitAdminToken(apiKey, apiSecret) {
   const now = Math.floor(Date.now() / 1000);
-  const header = base64Url(JSON.stringify({ alg:"HS256", typ:"JWT" }));
+  // Match LiveKit's official server SDK token shape exactly. Service tokens
+  // have an issuer and grant, but no participant subject/identity.
+  const header = base64Url(JSON.stringify({ alg:"HS256" }));
   const payload = base64Url(JSON.stringify({
     iss:String(apiKey),
-    sub:"ace-live-video-dispatch",
-    nbf:now - 5,
+    nbf:now,
     exp:now + 300,
     video:{ roomAdmin:true },
   }));
@@ -108,7 +109,10 @@ async function dispatchEila(env, meetingUrl) {
       }),
     }),
   });
-  if (!response.ok) throw new Error("LiveKit could not dispatch EILA");
+  if (!response.ok) {
+    const detail = (await response.text()).replace(/\s+/g, " ").trim().slice(0, 240);
+    throw new Error(`LiveKit dispatch failed (${response.status})${detail ? `: ${detail}` : ""}`);
+  }
   const dispatch = await response.json();
   return { room, dispatchId:dispatch.id || dispatch.dispatch_id || null };
 }
