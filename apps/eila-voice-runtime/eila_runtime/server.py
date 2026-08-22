@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import hmac
+import re
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -66,6 +67,7 @@ async def health():
             "chat": True,
             "legacyTwilioTts": True,
             "livekitPcmTts": True,
+            "livekitStreamingPcmTts": True,
             "multiVoice": True,
         },
         "llm": {
@@ -124,6 +126,54 @@ async def compatible_livekit_tts(
             "x-eila-sample-rate": str(sample_rate),
             "x-eila-num-channels": "1",
             "x-eila-voice-id": settings.resolve_voice_id(req.voiceId),
+        },
+    )
+
+
+@app.post("/tts/livekit/stream")
+async def streaming_livekit_tts(
+    req: SpeechRequest,
+    request: Request,
+    x_runtime_token: str | None = Header(default=None),
+):
+    """Stream phrase-progressive 24 kHz mono PCM16 in one HTTP response."""
+    authorize(x_runtime_token)
+    if not re.search(r"\w", req.text):
+        raise HTTPException(status_code=422, detail="TTS text is empty")
+    rid = request_id("livekit_tts")
+    resolved_voice = settings.resolve_voice_id(req.voiceId)
+    stream = engine.stream_livekit_speech(req.text, rid, resolved_voice)
+    try:
+        first_chunk = await anext(stream)
+    except StopAsyncIteration as exc:
+        await stream.aclose()
+        raise HTTPException(status_code=422, detail="TTS produced no audio") from exc
+    except Exception as exc:
+        await stream.aclose()
+        raise HTTPException(status_code=503, detail="TTS synthesis failed") from exc
+
+    async def body():
+        try:
+            if not await request.is_disconnected():
+                yield first_chunk
+            async for audio_chunk in stream:
+                if await request.is_disconnected():
+                    break
+                yield audio_chunk
+        finally:
+            await stream.aclose()
+
+    return StreamingResponse(
+        body(),
+        media_type="audio/pcm",
+        headers={
+            "cache-control": "no-store",
+            "x-accel-buffering": "no",
+            "x-eila-request-id": rid,
+            "x-eila-audio-encoding": "pcm_s16le",
+            "x-eila-sample-rate": "24000",
+            "x-eila-num-channels": "1",
+            "x-eila-voice-id": resolved_voice,
         },
     )
 

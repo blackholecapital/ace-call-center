@@ -2,18 +2,23 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
+import logging
 import time
 from collections.abc import AsyncIterator
 
 import numpy as np
 
-from .audio import chunks, resample, twilio_mulaw
+from .audio import chunks, pcm16, resample, twilio_mulaw
 from .avatar import AvatarRuntime
 from .config import Settings
 from .llm import StreamingLlm
 from .protocol import event
 from .text import PhraseChunker
 from .tts import ChatterboxSpeech
+
+
+logger = logging.getLogger(__name__)
 
 
 class VoiceEngine:
@@ -50,6 +55,77 @@ class VoiceEngine:
             audioBytes=len(payload),
             latencyMs=round((time.perf_counter() - started) * 1000),
         )
+
+    async def stream_livekit_speech(
+        self, text: str, request_id: str, voice_id: str | None = None
+    ) -> AsyncIterator[bytes]:
+        """Progressively synthesize one completed reply into one PCM response."""
+        started = time.perf_counter()
+        resolved_voice = self.settings.resolve_voice_id(voice_id)
+        sample_rate = 24000
+        bytes_per_chunk = max(
+            2,
+            int(sample_rate * self.settings.audio_chunk_ms / 1000) * 2,
+        )
+        phrase_chunker = PhraseChunker(
+            self.settings.phrase_min_words,
+            self.settings.phrase_target_words,
+            self.settings.phrase_max_words,
+            self.settings.phrase_first_max_words,
+        )
+        phrases = phrase_chunker.split_completed(text)
+        emitted_bytes = 0
+        first_pcm_ms: int | None = None
+        phrase_metrics: list[dict] = []
+        outcome = "cancelled"
+
+        try:
+            for phrase_index, phrase in enumerate(phrases):
+                phrase_started = time.perf_counter()
+                speech = await self.tts.synthesize(phrase, resolved_voice)
+                synthesis_ms = round((time.perf_counter() - phrase_started) * 1000)
+                samples = resample(speech.samples, speech.sample_rate, sample_rate)
+                payload = pcm16(samples).astype("<i2", copy=False).tobytes()
+                phrase_metrics.append(
+                    {
+                        "index": phrase_index,
+                        "words": len(phrase.split()),
+                        "synthesisMs": synthesis_ms,
+                        "audioBytes": len(payload),
+                    }
+                )
+                for offset in range(0, len(payload), bytes_per_chunk):
+                    audio_chunk = payload[offset : offset + bytes_per_chunk]
+                    if not audio_chunk:
+                        continue
+                    if first_pcm_ms is None:
+                        first_pcm_ms = round((time.perf_counter() - started) * 1000)
+                    emitted_bytes += len(audio_chunk)
+                    yield audio_chunk
+            outcome = "completed"
+        except asyncio.CancelledError:
+            outcome = "cancelled"
+            raise
+        except Exception:
+            outcome = "error"
+            raise
+        finally:
+            logger.info(
+                "LIVEKIT_TTS_STREAM %s",
+                json.dumps(
+                    {
+                        "requestId": request_id,
+                        "voiceId": resolved_voice,
+                        "phraseCount": len(phrases),
+                        "firstPcmMs": first_pcm_ms,
+                        "phraseMetrics": phrase_metrics,
+                        "totalMs": round((time.perf_counter() - started) * 1000),
+                        "emittedBytes": emitted_bytes,
+                        "outcome": outcome,
+                    },
+                    separators=(",", ":"),
+                ),
+            )
 
     async def stream_turn(
         self,

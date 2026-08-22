@@ -55,6 +55,22 @@ class PhraseChunkerTests(unittest.TestCase):
         chunker._buffer = "?"
         self.assertEqual(chunker.flush(), [])
 
+    def test_splits_completed_reply_without_losing_text(self):
+        text = "I'd be happy to help you find the right option. What size do you need?"
+        chunker = PhraseChunker(2, 6, 18, first_maximum_words=6)
+
+        phrases = chunker.split_completed(text)
+
+        self.assertGreater(len(phrases), 1)
+        self.assertLessEqual(len(phrases[0].split()), 6)
+        self.assertEqual(" ".join(phrases), text)
+
+    def test_completed_reply_keeps_punctuation_in_order(self):
+        text = "Yes, absolutely; I can check that now. Then we'll compare both options."
+        chunker = PhraseChunker(2, 6, 18, first_maximum_words=6)
+
+        self.assertEqual(" ".join(chunker.split_completed(text)), text)
+
 
 if __name__ == "__main__":
     unittest.main()

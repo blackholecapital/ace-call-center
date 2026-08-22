@@ -23,12 +23,20 @@ All protected endpoints require `x-runtime-token`.
 - `GET /health` - provider readiness, loaded voices and protocol metadata
 - `POST /chat` - compatibility endpoint returning `{ "response": "..." }`
 - `POST /tts/twilio` - complete 8 kHz mu-law payload; accepts optional `voiceId`
+- `POST /tts/livekit` - complete 24 kHz mono PCM16 payload; rollback-compatible
+- `POST /tts/livekit/stream` - phrase-progressive 24 kHz mono PCM16 in one response
 - `POST /v1/speech` - NDJSON TTS stream; accepts optional `voiceId`
 - `POST /v1/turn` - NDJSON LLM + TTS stream; accepts optional `voiceId` and `avatarId`
 - `GET /v1/avatar-renders/{jobId}` - authenticated proxy for avatar job status
 - `GET /v1/avatar-renders/{jobId}/video` - authenticated proxy for completed MP4 output
 
 The same text/audio events can feed telephone channels today and MuseTalk/avatar adapters later.
+
+The progressive LiveKit endpoint accepts the completed reply once, synthesizes a
+short first phrase followed by longer phrases, and emits each waveform in 100 ms
+PCM chunks. It does not use multiple HTTP requests and does not change the selected
+voice between phrases. Clients must wait for the first non-empty body chunk before
+initializing their audio emitter.
 
 ## Shared deployment model
 
